@@ -291,131 +291,161 @@ class ProfileService {
   }
 
   // Launch a profile using AdsPower with enhanced error handling and automation
-  async launchProfile(profileId, options = {}) {
-    try {
-      console.log(`🚀 Attempting to launch profile ${profileId}...`);
-      
-      // Check if profile exists and has required data
-      const profile = await this.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
-      if (!profile) {
-        throw new Error(`Profile ${profileId} not found`);
-      }
+  // CRITICAL FIX: Replace the launchProfile method in ProfileService.js
 
-      // Check if profile is already running
-      if (this.activeProfiles.has(profileId)) {
-        console.log(`ℹ️ Profile ${profileId} is already running`);
-        return {
-          success: true,
-          profileId: profileId,
-          alreadyRunning: true,
-          sessionData: this.activeProfiles.get(profileId)
-        };
-      }
-
-      // Ensure AdsPower profile exists
-      if (!profile.ads_power_id) {
-        console.log(`🔄 No AdsPower ID found for profile ${profileId}, creating one...`);
-        const createResult = await this.createAdsPowerProfile(profile, profileId);
-        if (createResult.success && createResult.profile_id) {
-          await this.db.run(
-            'UPDATE profiles SET ads_power_id = ? WHERE id = ?',
-            [createResult.profile_id, profileId]
-          );
-          profile.ads_power_id = createResult.profile_id;
-          console.log(`✅ Created new AdsPower profile: ${createResult.profile_id}`);
-        } else {
-          throw new Error('Failed to create AdsPower profile');
-        }
-      }
-
-      // Set up launch options with automation features
-      const launchOptions = {
-        headless: options.headless || false,
-        disable_password_filling: options.disable_password_filling || false,
-        clear_cache_after_closing: options.clear_cache_after_closing || false,
-        enable_password_saving: options.enable_password_saving || false,
-        launch_args: [
-          '--disable-blink-features=AutomationControlled',
-          '--disable-infobars',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu',
-          '--window-size=1920,1080',
-          ...(options.launch_args || [])
-        ],
-        // Enable automation features
-        automation: {
-          enable: true,
-          random_mouse_movement: true,
-          random_scrolling: true,
-          min_mouse_interval: 5000,  // 5 seconds
-          max_mouse_interval: 30000, // 30 seconds
-          scroll_duration: 1000,     // 1 second
-          scroll_pause: 3000         // 3 seconds between scrolls
-        }
-      };
-
-      console.log(`🚀 Launching profile ${profileId} (AdsPower ID: ${profile.ads_power_id})...`);
-      
-      // Update status to launching
-      await this.updateProfileStatus(profileId, 'launching');
-
-      // Launch the profile
-      const result = await this.adsPowerService.startProfile(
-        profile.ads_power_id,
-        launchOptions
-      );
-
-      if (result.success) {
-        console.log(`✅ Successfully launched profile ${profileId}`);
-        
-        // Store the session data
-        const sessionData = {
-          profileId: profileId,
-          adsPowerProfileId: profile.ads_power_id,
-          wsEndpoint: result.ws_endpoint,
-          seleniumEndpoint: result.selenium_endpoint,
-          debugPort: result.debug_port,
-          launchedAt: new Date().toISOString(),
-          targetUrl: profile.target_url || options.target_url || 'https://www.google.com',
-          lastActivity: new Date().toISOString()
-        };
-
-        this.activeProfiles.set(profileId, sessionData);
-        await this.updateProfileStatus(profileId, 'running');
-
-        // Log the successful launch
-        await this.logAction('info', 'Profile launched successfully', profileId, {
-          ws_endpoint: result.ws_endpoint,
-          selenium_endpoint: result.selenium_endpoint,
-          debug_port: result.debug_port
-        });
-
-        return {
-          success: true,
-          profileId: profileId,
-          sessionData: sessionData
-        };
-      } else {
-        throw new Error(result.error || 'Failed to launch profile');
-      }
-    } catch (error) {
-      console.error(`❌ Error launching profile ${profileId}:`, error);
-      
-      // Update status to error
-      await this.updateProfileStatus(profileId, 'error');
-      
-      // Log the error
-      await this.logAction('error', `Failed to launch profile: ${error.message}`, profileId, {
-        error: error.toString(),
-        stack: error.stack
-      });
-      
-      throw error;
+async launchProfile(profileId, options = {}) {
+  try {
+    console.log(`🚀 [LAUNCH] Starting launch for profile ${profileId}...`);
+    
+    // Step 1: Verify profile exists
+    const profile = await this.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+    if (!profile) {
+      throw new Error(`Profile ${profileId} not found in database`);
     }
+    console.log(`✅ [LAUNCH] Profile ${profileId} found: ${profile.name}`);
+
+    // Step 2: Check if already running
+    if (this.activeProfiles.has(profileId)) {
+      console.log(`ℹ️ [LAUNCH] Profile ${profileId} is already running`);
+      return {
+        success: true,
+        profileId: profileId,
+        alreadyRunning: true,
+        sessionData: this.activeProfiles.get(profileId)
+      };
+    }
+
+    // Step 3: Verify AdsPower connection
+    console.log(`🔌 [LAUNCH] Checking AdsPower connection...`);
+    const isConnected = await this.adsPowerService.checkConnection();
+    console.log(`🔌 [LAUNCH] AdsPower connected: ${isConnected}, Demo mode: ${this.adsPowerService.demoMode}`);
+
+    if (!isConnected && !this.adsPowerService.demoMode) {
+      throw new Error('AdsPower is not connected. Please start AdsPower and enable Local API.');
+    }
+
+    // Step 4: Ensure AdsPower profile exists
+    if (!profile.ads_power_id) {
+      console.log(`🔄 [LAUNCH] No AdsPower ID for profile ${profileId}, creating...`);
+      
+      const createResult = await this.createAdsPowerProfile({
+        name: profile.name,
+        target_url: profile.target_url,
+        device_type: profile.device_type,
+        proxy_id: profile.proxy_id
+      }, profileId);
+
+      if (!createResult.success || !createResult.profile_id) {
+        throw new Error(`Failed to create AdsPower profile: ${createResult.error || 'Unknown error'}`);
+      }
+
+      // Update database with new AdsPower ID
+      await this.db.run(
+        'UPDATE profiles SET ads_power_id = ? WHERE id = ?',
+        [createResult.profile_id, profileId]
+      );
+      profile.ads_power_id = createResult.profile_id;
+      console.log(`✅ [LAUNCH] Created AdsPower profile: ${createResult.profile_id}`);
+    }
+
+    // Step 5: Update status to launching
+    console.log(`📝 [LAUNCH] Updating status to 'launching'...`);
+    await this.updateProfileStatus(profileId, 'launching');
+
+    // Step 6: Prepare launch options
+    const launchOptions = {
+      headless: options.headless || false,
+      disable_password_filling: options.disable_password_filling || false,
+      clear_cache_after_closing: options.clear_cache_after_closing || false,
+      enable_password_saving: options.enable_password_saving || false,
+      launch_args: [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--window-size=1920,1080',
+        ...(options.launch_args || [])
+      ]
+    };
+
+    console.log(`🚀 [LAUNCH] Starting AdsPower profile ${profile.ads_power_id}...`);
+    console.log(`🚀 [LAUNCH] Launch options:`, JSON.stringify(launchOptions, null, 2));
+
+    // Step 7: Launch in AdsPower
+    const result = await this.adsPowerService.startProfile(
+      profile.ads_power_id,
+      launchOptions
+    );
+
+    console.log(`🔄 [LAUNCH] AdsPower start result:`, JSON.stringify(result, null, 2));
+
+    if (!result.success) {
+      throw new Error(result.error || 'AdsPower startProfile returned success: false');
+    }
+
+    // Step 8: Store session data
+    const sessionData = {
+      profileId: profileId,
+      adsPowerProfileId: profile.ads_power_id,
+      wsEndpoint: result.ws_endpoint,
+      seleniumEndpoint: result.selenium_endpoint,
+      debugPort: result.debug_port,
+      launchedAt: new Date().toISOString(),
+      targetUrl: profile.target_url || options.target_url || 'https://www.google.com',
+      lastActivity: new Date().toISOString()
+    };
+
+    this.activeProfiles.set(profileId, sessionData);
+    console.log(`✅ [LAUNCH] Session data stored for profile ${profileId}`);
+
+    // Step 9: Update status to running
+    await this.updateProfileStatus(profileId, 'running');
+    console.log(`✅ [LAUNCH] Profile ${profileId} status updated to 'running'`);
+
+    // Step 10: Log success
+    await this.logAction('info', 'Profile launched successfully', profileId, {
+      ws_endpoint: result.ws_endpoint,
+      selenium_endpoint: result.selenium_endpoint,
+      debug_port: result.debug_port,
+      ads_power_id: profile.ads_power_id
+    });
+
+    console.log(`✅ [LAUNCH] Profile ${profileId} launched successfully!`);
+    console.log(`📊 [LAUNCH] WS Endpoint: ${result.ws_endpoint}`);
+    console.log(`📊 [LAUNCH] Selenium Endpoint: ${result.selenium_endpoint}`);
+
+    return {
+      success: true,
+      profileId: profileId,
+      sessionData: sessionData
+    };
+
+  } catch (error) {
+    console.error(`❌ [LAUNCH] ERROR launching profile ${profileId}:`, error);
+    console.error(`❌ [LAUNCH] Error stack:`, error.stack);
+    
+    // Update status to error
+    try {
+      await this.updateProfileStatus(profileId, 'error');
+    } catch (statusError) {
+      console.error(`❌ [LAUNCH] Failed to update error status:`, statusError);
+    }
+    
+    // Log the error
+    await this.logAction('error', `Failed to launch profile: ${error.message}`, profileId, {
+      error: error.toString(),
+      stack: error.stack
+    });
+    
+    // Return error instead of throwing
+    return {
+      success: false,
+      profileId: profileId,
+      error: error.message
+    };
   }
+}
 
   // Stop a running profile
   async stopProfile(profileId) {

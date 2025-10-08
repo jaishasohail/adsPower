@@ -15,9 +15,9 @@ class LifecycleManager {
       targetUrl: 'https://google.com',
       deviceTypes: ['PC', 'Mac', 'Mobile'],
       rpaTool: 'adspower',
-      profileRotationDelay: 2000, // 2 seconds between profile operations
-      taskDurationMin: 30000, // 30 seconds minimum
-      taskDurationMax: 90000, // 90 seconds maximum
+      profileRotationDelay: 2000,
+      taskDurationMin: 30000,
+      taskDurationMax: 90000,
       autoDelete: true,
       instantRecycle: true,
       humanLikeActivity: true,
@@ -43,18 +43,34 @@ class LifecycleManager {
     };
   }
 
-  // Update settings from dashboard
   updateSettings(newSettings) {
     this.settings = { ...this.settings, ...newSettings };
     console.log('📊 Settings updated:', this.settings);
     return this.settings;
   }
 
-  // Start the infinite loop lifecycle
   async start() {
     if (this.isRunning) {
       console.log('⚠️ Lifecycle manager already running');
       return { success: false, message: 'Already running' };
+    }
+
+    // CRITICAL: Verify AdsPower connection before starting
+    console.log('🔗 Verifying AdsPower connection...');
+    const isConnected = await this.adsPowerService.checkConnection();
+    
+    if (!isConnected && !this.adsPowerService.demoMode) {
+      console.error('❌ AdsPower is not connected and not in demo mode');
+      return { 
+        success: false, 
+        message: 'AdsPower is not connected. Please start AdsPower and enable Local API.',
+        recommendations: [
+          '1. Launch AdsPower desktop application',
+          '2. Go to Settings > Local API',
+          '3. Enable Local API on port 50325',
+          '4. Try again'
+        ]
+      };
     }
 
     this.isRunning = true;
@@ -62,6 +78,7 @@ class LifecycleManager {
     console.log('🚀 Starting Infinite Loop Lifecycle Manager...');
     console.log(`📊 Max concurrent profiles: ${this.settings.maxConcurrentProfiles}`);
     console.log(`🎯 Target URL: ${this.settings.targetUrl}`);
+    console.log(`🔌 AdsPower Status: ${isConnected ? 'Connected' : 'Demo Mode'}`);
     
     // Start all management processes
     this.startLauncher();
@@ -74,7 +91,6 @@ class LifecycleManager {
     return { success: true, message: 'Lifecycle manager started' };
   }
 
-  // Stop the lifecycle
   async stop() {
     if (!this.isRunning) {
       return { success: false, message: 'Not running' };
@@ -102,7 +118,6 @@ class LifecycleManager {
     return { success: true, message: 'Lifecycle manager stopped', stats: this.stats };
   }
 
-  // LAUNCHER: Creates and launches profiles up to max limit
   startLauncher() {
     this.intervals.launcher = setInterval(async () => {
       if (!this.isRunning) return;
@@ -126,7 +141,6 @@ class LifecycleManager {
         const profilesToLaunch = Math.min(slotsAvailable, 1);
         for (let i = 0; i < profilesToLaunch; i++) {
           await this.launchNewProfile();
-          // Small delay between launches to avoid overwhelming AdsPower
           await this.delay(this.settings.profileRotationDelay);
         }
 
@@ -134,10 +148,9 @@ class LifecycleManager {
         console.error('❌ Launcher error:', error);
         this.stats.totalErrors++;
       }
-    }, 5000); // Check every 5 seconds (reduced from 2 seconds for performance)
+    }, 5000);
   }
 
-  // MONITOR: Checks profile status and manages task completion
   startMonitor() {
     this.intervals.monitor = setInterval(async () => {
       if (!this.isRunning) return;
@@ -147,18 +160,23 @@ class LifecycleManager {
           const now = Date.now();
           const elapsed = now - profile.launchedAt;
           
-          // Check if profile task is complete (based on duration)
+          // Check if profile task is complete
           if (elapsed >= profile.taskDuration) {
             console.log(`✅ Profile ${profileId} task completed (ran for ${Math.round(elapsed/1000)}s)`);
             await this.markProfileCompleted(profileId);
+            continue;
           }
           
-          // Check if profile is still actually running in AdsPower (only if not in demo mode)
+          // Check if profile is still running in AdsPower (skip in demo mode)
           if (profile.adsPowerProfileId && !this.adsPowerService.demoMode) {
-            const status = await this.adsPowerService.checkProfileStatus(profile.adsPowerProfileId);
-            if (!status.success || !status.is_active) {
-              console.log(`⚠️ Profile ${profileId} no longer active in AdsPower`);
-              await this.markProfileCompleted(profileId);
+            try {
+              const status = await this.adsPowerService.checkProfileStatus(profile.adsPowerProfileId);
+              if (!status.success || !status.is_active) {
+                console.log(`⚠️ Profile ${profileId} no longer active in AdsPower`);
+                await this.markProfileCompleted(profileId);
+              }
+            } catch (error) {
+              console.warn(`⚠️ Could not check status for profile ${profileId}:`, error.message);
             }
           }
 
@@ -166,15 +184,13 @@ class LifecycleManager {
           console.error(`Monitor error for profile ${profileId}:`, error);
         }
       }
-    }, 10000); // Check every 10 seconds (reduced from 5 seconds for performance)
+    }, 10000);
   }
 
-  // RECYCLER: Instantly recycles completed profile slots
   startRecycler() {
     this.intervals.recycler = setInterval(async () => {
       if (!this.isRunning || !this.settings.instantRecycle) return;
 
-      // Process completed profiles for immediate recycling
       for (const profileId of this.completedProfiles) {
         try {
           await this.stopAndDeleteProfile(profileId);
@@ -183,42 +199,48 @@ class LifecycleManager {
           console.log(`♻️ Recycled profile ${profileId} - slot now available`);
         } catch (error) {
           console.error(`Recycler error for profile ${profileId}:`, error);
-          // Remove from completed set even on error to avoid infinite retry
           this.completedProfiles.delete(profileId);
         }
       }
-    }, 3000); // Check every 3 seconds (reduced from 1 second for performance)
+    }, 3000);
   }
 
-  // CLEANER: Removes old completed profiles and frees resources
   startCleaner() {
     this.intervals.cleaner = setInterval(async () => {
       if (!this.isRunning) return;
 
       try {
-        // Clean up database logs older than 24 hours
         await this.db.run(
           'DELETE FROM logs WHERE created_at < datetime("now", "-1 day")'
         );
 
-        // Clean up completed tasks from queue
         await this.db.run(
           'DELETE FROM task_queue WHERE status = "completed" AND completed_at < datetime("now", "-1 hour")'
         );
 
-        // Update statistics
         this.stats.activeCount = this.activeProfiles.size;
         this.stats.cycleCount++;
 
       } catch (error) {
         console.error('Cleaner error:', error);
       }
-    }, 120000); // Run every 2 minutes (reduced from 1 minute for performance)
+    }, 120000);
   }
 
-  // Launch a new profile with all configurations
+  // FIXED: Launch new profile with proper error handling and status tracking
   async launchNewProfile() {
+    let profileId = null;
+    let profile = null;
+
     try {
+      // Verify AdsPower connection before creating profile
+      const isConnected = await this.adsPowerService.checkConnection();
+      if (!isConnected && !this.adsPowerService.demoMode) {
+        console.error('❌ AdsPower not connected - cannot launch profile');
+        this.stats.totalErrors++;
+        return null;
+      }
+
       // Get next available proxy
       const proxy = await this.getNextAvailableProxy();
       
@@ -229,6 +251,8 @@ class LifecycleManager {
       // Generate unique profile name
       const profileName = `Auto-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
       
+      console.log(`🎯 Creating profile: ${profileName} (${deviceType}${proxy ? ' with proxy' : ''})`);
+
       // Create profile data
       const profileData = {
         name: profileName,
@@ -237,36 +261,64 @@ class LifecycleManager {
         target_url: this.settings.targetUrl
       };
 
-      console.log(`🎯 Creating profile: ${profileName} (${deviceType}${proxy ? ' with proxy' : ''})`);
-
-      // Create profile in database and AdsPower
-      const profile = await this.profileService.createProfile(profileData);
+      // Create profile (this sets status to 'launching')
+      profile = await this.profileService.createProfile(profileData);
       
       if (!profile || !profile.id) {
-        throw new Error('Failed to create profile');
+        throw new Error('Failed to create profile - no profile ID returned');
       }
 
-      console.log(`✅ Profile ${profile.id} created, now launching...`);
+      profileId = profile.id;
+      console.log(`✅ Profile ${profileId} created with AdsPower ID: ${profile.ads_power_id || 'pending'}`);
 
-      // Launch the profile immediately after creation
-      const launchResult = await this.profileService.launchProfile(profile.id, {
-        headless: false,
-        clear_cache_after_closing: true
-      });
+      // CRITICAL FIX: Wait a moment for database to commit
+      await this.delay(500);
 
-      if (!launchResult.success) {
-        throw new Error(`Failed to launch profile: ${launchResult.error || 'Unknown error'}`);
+      // Verify profile was created with AdsPower ID
+      if (!profile.ads_power_id) {
+        console.error(`❌ Profile ${profileId} has no AdsPower ID - cannot launch`);
+        
+        // Try to create AdsPower profile manually
+        console.log(`🔄 Attempting to create AdsPower profile manually...`);
+        const adsPowerResult = await this.profileService.createAdsPowerProfile(profileData, profileId);
+        
+        if (adsPowerResult.success && adsPowerResult.profile_id) {
+          await this.db.run(
+            'UPDATE profiles SET ads_power_id = ? WHERE id = ?',
+            [adsPowerResult.profile_id, profileId]
+          );
+          profile.ads_power_id = adsPowerResult.profile_id;
+          console.log(`✅ Manually created AdsPower profile: ${adsPowerResult.profile_id}`);
+        } else {
+          throw new Error('Failed to create AdsPower profile');
+        }
       }
 
-      // Calculate task duration (random between min and max)
+      // Calculate task duration
       const taskDuration = Math.floor(
         Math.random() * (this.settings.taskDurationMax - this.settings.taskDurationMin) + 
         this.settings.taskDurationMin
       );
 
+      console.log(`🚀 Launching profile ${profileId} (AdsPower ID: ${profile.ads_power_id})...`);
+
+      // Launch the profile with explicit options
+      const launchResult = await this.profileService.launchProfile(profileId, {
+        headless: false,
+        clear_cache_after_closing: true,
+        disable_password_filling: false,
+        enable_password_saving: false
+      });
+
+      if (!launchResult.success) {
+        throw new Error(`Launch failed: ${launchResult.error || 'Unknown error'}`);
+      }
+
+      console.log(`✅ Profile ${profileId} launched successfully`);
+
       // Store active profile info
-      this.activeProfiles.set(profile.id, {
-        profileId: profile.id,
+      this.activeProfiles.set(profileId, {
+        profileId: profileId,
         name: profileName,
         deviceType: deviceType,
         proxyId: proxy?.id,
@@ -276,50 +328,71 @@ class LifecycleManager {
         targetUrl: this.settings.targetUrl
       });
 
+      // Update database status to 'running'
+      await this.db.run(
+        'UPDATE profiles SET status = ? WHERE id = ?',
+        ['running', profileId]
+      );
+
       // Start human-like activity if enabled
       if (this.settings.humanLikeActivity && this.mouseService) {
-        this.startHumanActivity(profile.id, deviceType, taskDuration);
+        this.startHumanActivity(profileId, deviceType, taskDuration);
       }
 
       // Update proxy assignment
       if (proxy) {
         await this.db.run(
           'UPDATE proxies SET assigned_profile_id = ? WHERE id = ?',
-          [profile.id, proxy.id]
+          [profileId, proxy.id]
         );
       }
 
       this.stats.totalLaunched++;
-      console.log(`✅ Profile ${profile.id} launched successfully (Duration: ${Math.round(taskDuration/1000)}s)`);
+      console.log(`✅ Profile ${profileId} fully operational (Duration: ${Math.round(taskDuration/1000)}s)`);
       
       return profile;
 
     } catch (error) {
-      console.error('❌ Failed to launch profile:', error);
+      console.error('❌ Failed to launch profile:', error.message);
       this.stats.totalErrors++;
-      throw error;
+      
+      // Clean up failed profile
+      if (profileId) {
+        try {
+          await this.db.run(
+            'UPDATE profiles SET status = ? WHERE id = ?',
+            ['error', profileId]
+          );
+          
+          // Remove from active profiles if somehow added
+          this.activeProfiles.delete(profileId);
+          
+          // Optionally delete failed profile
+          if (this.settings.autoDelete) {
+            await this.profileService.deleteProfile(profileId);
+          }
+        } catch (cleanupError) {
+          console.error('Error cleaning up failed profile:', cleanupError);
+        }
+      }
+      
+      return null;
     }
   }
 
-  // Simulate human-like activity
   async startHumanActivity(profileId, deviceType, duration) {
     try {
-      // Random activity patterns
       const patterns = ['natural', 'browsing', 'scrolling', 'reading', 'clicking'];
       const pattern = patterns[Math.floor(Math.random() * patterns.length)];
-      
-      // Adjust intensity based on device type
       const intensity = deviceType === 'Mobile' ? 'low' : 'medium';
       
-      // Start mouse movement simulation
       if (this.mouseService) {
         await this.mouseService.simulateMouseMovement(profileId, {
           pattern: pattern,
-          duration: duration - 5000, // Stop 5 seconds before task ends
+          duration: duration - 5000,
           intensity: intensity
         });
 
-        // Random scrolling
         if (Math.random() > 0.5) {
           await this.mouseService.simulateScrolling(profileId, {
             direction: Math.random() > 0.5 ? 'down' : 'up',
@@ -327,7 +400,6 @@ class LifecycleManager {
           });
         }
 
-        // Random clicks
         if (Math.random() > 0.7) {
           await this.mouseService.simulateClick(profileId, {
             x: Math.floor(Math.random() * 1000) + 100,
@@ -343,17 +415,14 @@ class LifecycleManager {
     }
   }
 
-  // Mark profile as completed and ready for recycling
   async markProfileCompleted(profileId) {
     try {
       const profile = this.activeProfiles.get(profileId);
       if (!profile) return;
 
-      // Move to completed set
       this.completedProfiles.add(profileId);
       this.activeProfiles.delete(profileId);
 
-      // Update database status
       await this.profileService.updateProfileStatus(profileId, 'completed');
 
       console.log(`📝 Profile ${profileId} marked for recycling`);
@@ -363,18 +432,20 @@ class LifecycleManager {
     }
   }
 
-  // Stop and delete a profile completely
   async stopAndDeleteProfile(profileId) {
     try {
       const profile = this.activeProfiles.get(profileId) || 
                      Array.from(this.activeProfiles.values()).find(p => p.profileId === profileId);
 
-      // Stop in AdsPower if running
       if (profile?.adsPowerProfileId) {
-        await this.adsPowerService.stopProfile(profile.adsPowerProfileId);
+        try {
+          await this.adsPowerService.stopProfile(profile.adsPowerProfileId);
+          console.log(`✅ Stopped AdsPower profile ${profile.adsPowerProfileId}`);
+        } catch (error) {
+          console.warn(`⚠️ Could not stop AdsPower profile ${profile.adsPowerProfileId}:`, error.message);
+        }
       }
 
-      // Free the proxy
       if (profile?.proxyId) {
         await this.db.run(
           'UPDATE proxies SET assigned_profile_id = NULL WHERE id = ?',
@@ -382,14 +453,12 @@ class LifecycleManager {
         );
       }
 
-      // Delete from database (this also deletes from AdsPower)
       if (this.settings.autoDelete) {
         await this.profileService.deleteProfile(profileId);
       } else {
         await this.profileService.updateProfileStatus(profileId, 'stopped');
       }
 
-      // Remove from tracking
       this.activeProfiles.delete(profileId);
       this.completedProfiles.delete(profileId);
 
@@ -399,7 +468,6 @@ class LifecycleManager {
     }
   }
 
-  // Get next available proxy with rotation
   async getNextAvailableProxy() {
     if (!this.settings.proxyRotation) return null;
 
@@ -412,7 +480,6 @@ class LifecycleManager {
       );
 
       if (proxies.length > 0) {
-        // Update last used timestamp
         await this.db.run(
           'UPDATE proxies SET last_used = CURRENT_TIMESTAMP WHERE id = ?',
           [proxies[0].id]
@@ -427,7 +494,6 @@ class LifecycleManager {
     }
   }
 
-  // Get current statistics
   getStats() {
     const runtime = this.stats.startTime ? 
       Math.round((Date.now() - this.stats.startTime.getTime()) / 1000) : 0;
@@ -451,7 +517,6 @@ class LifecycleManager {
     };
   }
 
-  // Format runtime to readable string
   formatRuntime(seconds) {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -459,17 +524,14 @@ class LifecycleManager {
     return `${hours}h ${minutes}m ${secs}s`;
   }
 
-  // Utility delay function
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Emergency stop all
   async emergencyStop() {
     console.log('🚨 EMERGENCY STOP INITIATED');
     await this.stop();
     
-    // Force stop all profiles in AdsPower
     for (const [profileId, profile] of this.activeProfiles) {
       if (profile.adsPowerProfileId) {
         try {

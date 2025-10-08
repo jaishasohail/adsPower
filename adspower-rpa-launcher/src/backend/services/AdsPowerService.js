@@ -347,87 +347,100 @@ class AdsPowerService {
   }
 
   // Launch/Start a profile with enhanced options for automation
-  async startProfile(profileId, options = {}) {
-    try {
-      // Handle demo mode
-      if (!this.isConnected || this.demoMode) {
-        console.log(`🎭 Simulating profile start: ${profileId}`);
-        return {
-          success: true,
-          profile_id: profileId,
-          ws_endpoint: `ws://localhost:50325/devtools/browser/${profileId}`,
-          selenium_endpoint: `http://localhost:50325/selenium/${profileId}`,
-          debug_port: 9222
-        };
-      }
+  // CRITICAL FIX: Replace the startProfile method in AdsPowerService.js
 
-      // Default launch options
-      const launchOptions = {
-        headless: options.headless || false,
-        disable_password_filling: options.disable_password_filling || false,
-        clear_cache_after_closing: options.clear_cache_after_closing || false,
-        enable_password_saving: options.enable_password_saving || false,
-        launch_args: options.launch_args || [],
-        // Enable automation features
-        automation: {
-          enable: true,
-          random_mouse_movement: true,
-          random_scrolling: true,
-          min_mouse_interval: 5000,  // 5 seconds
-          max_mouse_interval: 30000, // 30 seconds
-          scroll_duration: 1000,     // 1 second
-          scroll_pause: 3000         // 3 seconds between scrolls
-        }
+async startProfile(profileId, options = {}) {
+  try {
+    console.log(`🚀 [ADS] Starting profile ${profileId}...`);
+    
+    // Handle demo mode
+    if (!this.isConnected || this.demoMode) {
+      console.log(`🎭 [ADS] Demo mode - simulating profile start: ${profileId}`);
+      return {
+        success: true,
+        profile_id: profileId,
+        ws_endpoint: `ws://localhost:50325/devtools/browser/${profileId}`,
+        selenium_endpoint: `http://localhost:50325/selenium/${profileId}`,
+        debug_port: 9222
       };
+    }
 
-      console.log(`🚀 Starting profile ${profileId} with options:`, launchOptions);
-      
-      // Start the profile
-      const response = await this.makeRequest(
-        '/api/v1/browser/start',
-        'POST',
-        {
-          user_id: profileId,
-          ...launchOptions
-        }
-      );
+    // Default launch options
+    const launchOptions = {
+      user_id: profileId, // CRITICAL: This is the AdsPower profile ID
+      headless: options.headless || 0, // 0 = visible, 1 = headless
+      disable_password_filling: options.disable_password_filling ? 1 : 0,
+      clear_cache_after_closing: options.clear_cache_after_closing ? 1 : 0,
+      enable_password_saving: options.enable_password_saving ? 1 : 0,
+    };
 
-      if (response && response.data && response.data.code === 0) {
-        console.log(`✅ Successfully started profile ${profileId}`);
-        
-        // Get the debug port and other connection details
-        const debugPort = response.data.data.debug_port || 50325;
-        const wsEndpoint = `ws://local.adspower.net:${debugPort}/devtools/browser/${profileId}`;
-        const seleniumEndpoint = `http://local.adspower.net:${debugPort}/selenium/${profileId}`;
-        
-        return {
-          success: true,
-          profile_id: profileId,
-          ws_endpoint: wsEndpoint,
-          selenium_endpoint: seleniumEndpoint,
-          debug_port: debugPort
-        };
-      } else {
-        const errorMsg = response?.data?.msg || 'Failed to start profile';
-        console.error(`❌ Error starting profile ${profileId}:`, errorMsg);
-        throw new Error(errorMsg);
-      }
-    } catch (error) {
-      console.error('Error in startProfile:', error);
+    // Add launch_args if provided
+    if (options.launch_args && Array.isArray(options.launch_args) && options.launch_args.length > 0) {
+      launchOptions.launch_args = options.launch_args;
+    }
+
+    console.log(`🚀 [ADS] Sending start request to AdsPower:`, JSON.stringify(launchOptions, null, 2));
+    
+    // Make the API request to start the browser
+    const response = await this.makeRequest(
+      '/api/v1/browser/start',
+      'GET', // IMPORTANT: AdsPower uses GET with query params, not POST
+      null,
+      launchOptions // Pass as query parameters
+    );
+
+    console.log(`🔄 [ADS] AdsPower response:`, JSON.stringify(response, null, 2));
+
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to start profile in AdsPower');
+    }
+
+    // Extract connection details from response
+    const data = response.data || {};
+    const debugPort = data.debug_port || data.ws?.match(/:(\d+)\//)?.[1] || 50325;
+    const wsEndpoint = data.ws || `ws://local.adspower.net:${debugPort}/devtools/browser/${profileId}`;
+    const seleniumEndpoint = data.selenium || `http://local.adspower.net:${debugPort}/selenium/${profileId}`;
+    
+    console.log(`✅ [ADS] Successfully started profile ${profileId}`);
+    console.log(`📊 [ADS] Debug Port: ${debugPort}`);
+    console.log(`📊 [ADS] WS Endpoint: ${wsEndpoint}`);
+    console.log(`📊 [ADS] Selenium Endpoint: ${seleniumEndpoint}`);
+    
+    return {
+      success: true,
+      profile_id: profileId,
+      ws_endpoint: wsEndpoint,
+      selenium_endpoint: seleniumEndpoint,
+      debug_port: debugPort,
+      webdriver: data.webdriver || null
+    };
+
+  } catch (error) {
+    console.error(`❌ [ADS] Error starting profile ${profileId}:`, error);
+    console.error(`❌ [ADS] Error details:`, error.message);
+    
+    // If connection fails, try to reconnect and retry once
+    if (!this.isConnected) {
+      console.log('🔌 [ADS] Attempting to reconnect to AdsPower...');
+      await this.checkConnection();
       
-      // If connection fails, try to reconnect and retry once
-      if (!this.isConnected) {
-        console.log('🔌 Attempting to reconnect to AdsPower...');
-        await this.checkConnection();
-        if (this.isConnected) {
-          console.log('🔄 Retrying profile start after reconnection');
+      if (this.isConnected) {
+        console.log('🔄 [ADS] Retrying profile start after reconnection');
+        // Recursive retry - but only once to avoid infinite loop
+        if (!options._retried) {
+          options._retried = true;
           return await this.startProfile(profileId, options);
         }
       }
-      
-      throw error;
     }
+    
+    return {
+      success: false,
+      error: error.message,
+      profile_id: profileId
+    };
   }
+}
 
   // Stop/Close a profile
   async stopProfile(profileId) {
