@@ -24,7 +24,7 @@ class AdsPowerService {
     }
   }
   constructor() {
-    this.baseURL = process.env.ADSPOWER_BASE_URL || 'http://local.adspower.net:50325';
+    this.baseURL = "http://127.0.0.1:50325" ;
     this.apiKey = process.env.ADSPOWER_API_KEY || null;
     this.isConnected = false;
     this.demoMode = false;
@@ -177,18 +177,22 @@ class AdsPowerService {
     this._connectionCheckPromise = (async () => {
       try {
         console.log('[checkConnection] Starting AdsPower connection check...');
-        // Hard timeout (3s) in case axios or network hangs
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Connection check timed out after 3s')), 3000));
+        // Hard timeout (10s) in case axios or network hangs
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Connection check timed out after 10s')), 10000));
         let res = await Promise.race([
           this.makeRequest('/api/v1/user/list', 'GET', null, { page: 1, page_size: 1 }),
           timeoutPromise
         ]);
+
+        // Debug: log the raw response
+        console.log('[checkConnection] Raw response:', JSON.stringify(res, null, 2));
 
         // If rate limited, wait and retry once
         if (res && res.error && /too many request/i.test(res.error)) {
           console.warn('[checkConnection] Rate limited, retrying after 1s...');
           await new Promise(r => setTimeout(r, 1000));
           res = await this.makeRequest('/api/v1/user/list', 'GET', null, { page: 1, page_size: 1 });
+          console.log('[checkConnection] Raw response after retry:', JSON.stringify(res, null, 2));
         }
 
         this.isConnected = res.success;
@@ -343,22 +347,21 @@ class AdsPowerService {
       if (!fingerprint_config.automatic_timezone) fingerprint_config.automatic_timezone = 1;
       if (!fingerprint_config.language) fingerprint_config.language = ['en-US', 'en'];
 
-      // Proxy normalization
-      if (user_proxy_config) {
-        if (!Object.keys(user_proxy_config).length) {
-          // Empty object -> drop
-          user_proxy_config = undefined;
-        } else {
-          if (!user_proxy_config.proxy_host || !user_proxy_config.proxy_port) {
-            console.log('Removing user_proxy_config (missing host/port)');
-            user_proxy_config = undefined;
-          } else {
-            user_proxy_config.proxy_type = (user_proxy_config.proxy_type || 'http').toLowerCase();
-            user_proxy_config.proxy_port = String(user_proxy_config.proxy_port);
-            user_proxy_config.proxy_user = user_proxy_config.proxy_user || '';
-            user_proxy_config.proxy_password = user_proxy_config.proxy_password || '';
-            user_proxy_config.proxy_soft = user_proxy_config.proxy_soft || 'other';
-          }
+      // Proxy normalization: Only include user_proxy_config if valid
+      let validProxyConfig = undefined;
+      if (user_proxy_config && typeof user_proxy_config === 'object') {
+        if (
+          user_proxy_config.proxy_host &&
+          user_proxy_config.proxy_port
+        ) {
+          validProxyConfig = {
+            ...user_proxy_config,
+            proxy_type: (user_proxy_config.proxy_type || 'http').toLowerCase(),
+            proxy_port: String(user_proxy_config.proxy_port),
+            proxy_user: user_proxy_config.proxy_user || '',
+            proxy_password: user_proxy_config.proxy_password || '',
+            proxy_soft: user_proxy_config.proxy_soft || 'other'
+          };
         }
       }
 
@@ -370,7 +373,7 @@ class AdsPowerService {
         fingerprint_config,
         remark
       };
-      if (user_proxy_config) payload.user_proxy_config = user_proxy_config;
+      if (validProxyConfig) payload.user_proxy_config = validProxyConfig;
 
       console.log('Creating profile with payload:', payload);
 
