@@ -55,7 +55,7 @@ class ProfileService {
       console.log(`🎨 Creating AdsPower profile for local profile ${localProfileId}`);
       const { name, target_url, proxy_id, device_type = 'PC' } = profileData;
 
-      // Build proxy config only if valid proxy
+      // Build proxy config: always send user_proxy_config (required by AdsPower API)
       let proxyConfig = null;
       if (proxy_id) {
         const proxy = await this.db.get('SELECT * FROM proxies WHERE id = ?', [proxy_id]);
@@ -76,6 +76,9 @@ class ProfileService {
         } else {
           console.warn('Proxy not found; skipping proxy assignment.');
         }
+      } else {
+        // No proxy selected: send a 'no proxy' config
+        proxyConfig = { proxy_type: 'none' };
       }
 
       const groupId = await this.getOrCreateDefaultGroup();
@@ -91,15 +94,16 @@ class ProfileService {
         fingerprint.screen_resolution = fingerprint.screen_resolution.replace(',', 'x');
       }
 
+
       const adsPowerConfig = {
         name: `${name} (ID: ${localProfileId})`,
         domain_name: derivedDomain,
         open_urls: openUrls,
         group_id: groupId,
         fingerprint_config: fingerprint,
-        remark: `Created by RPA Launcher - Profile ID: ${localProfileId}`
+        remark: `Created by RPA Launcher - Profile ID: ${localProfileId}`,
+        user_proxy_config: proxyConfig // Always include user_proxy_config
       };
-      if (proxyConfig) adsPowerConfig.user_proxy_config = proxyConfig;
 
       console.log('🚀 Creating AdsPower profile with config:', JSON.stringify(adsPowerConfig, null, 2));
 

@@ -139,20 +139,57 @@ class AdsPowerService {
 
   // Check if AdsPower is running and accessible
   async checkConnection() {
-    try {
-      const res = await this.makeRequest('/api/v1/user/list', 'GET', null, { page: 1, page_size: 1 });
-      this.isConnected = res.success;
-      this.demoMode = !res.success;
-      this.lastConnectionCheck = new Date();
-      if (this.isConnected) console.log('✅ AdsPower connection established');
-      return this.isConnected;
-    } catch (e) {
-      this.isConnected = false;
-      this.demoMode = true;
-      this.lastConnectionCheck = new Date();
-      console.log('⚠️  AdsPower connection failed - demo mode:', e.message);
-      return false;
+    // Debounce: if last check was successful and recent, return cached result
+    const now = Date.now();
+    const cacheMs = 15000; // 15 seconds cache window
+    if (this.isConnected && this.lastConnectionCheck && (now - this.lastConnectionCheck.getTime() < cacheMs)) {
+      //console.log('[checkConnection] Using cached connection status');
+      return true;
     }
+
+    // Prevent overlapping checks
+    if (this._connectionCheckPromise) {
+      //console.log('[checkConnection] Awaiting ongoing connection check');
+      return this._connectionCheckPromise;
+    }
+
+    this._connectionCheckPromise = (async () => {
+      try {
+        console.log('[checkConnection] Starting AdsPower connection check...');
+        // Hard timeout (3s) in case axios or network hangs
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Connection check timed out after 3s')), 3000));
+        let res = await Promise.race([
+          this.makeRequest('/api/v1/user/list', 'GET', null, { page: 1, page_size: 1 }),
+          timeoutPromise
+        ]);
+
+        // If rate limited, wait and retry once
+        if (res && res.error && /too many request/i.test(res.error)) {
+          console.warn('[checkConnection] Rate limited, retrying after 1s...');
+          await new Promise(r => setTimeout(r, 1000));
+          res = await this.makeRequest('/api/v1/user/list', 'GET', null, { page: 1, page_size: 1 });
+        }
+
+        this.isConnected = res.success;
+        this.demoMode = !res.success;
+        this.lastConnectionCheck = new Date();
+        if (this.isConnected) {
+          console.log('✅ AdsPower connection established');
+        } else {
+          console.log('❌ AdsPower connection failed (API returned unsuccessful)');
+        }
+        return this.isConnected;
+      } catch (e) {
+        this.isConnected = false;
+        this.demoMode = true;
+        this.lastConnectionCheck = new Date();
+        console.log('⚠️  AdsPower connection failed - demo mode:', e.message);
+        return false;
+      } finally {
+        this._connectionCheckPromise = null;
+      }
+    })();
+    return this._connectionCheckPromise;
   }
 
   // Get connection status
