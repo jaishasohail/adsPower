@@ -1,7 +1,74 @@
+// Add Puppeteer for browser automation
+const puppeteer = require('puppeteer');
+
 require('dotenv').config();
 const axios = require('axios');
 
 class AdsPowerService {
+
+  /**
+   * Connect Puppeteer to an AdsPower-launched browser instance using DevTools endpoint.
+   * @param {string} wsEndpoint - The WebSocket endpoint for Chrome DevTools Protocol (e.g., ws://127.0.0.1:9222/devtools/browser/xxxx)
+   * @returns {Promise<Browser>} Puppeteer Browser instance
+   */
+  async connectPuppeteer(wsEndpoint) {
+    try {
+      if (!wsEndpoint) {
+        throw new Error('No DevTools WebSocket endpoint provided.');
+      }
+      const browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+      console.log('✅ Connected Puppeteer to AdsPower browser:', wsEndpoint);
+      return browser;
+    } catch (error) {
+      console.error('❌ Failed to connect Puppeteer to AdsPower browser:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the DevTools WebSocket endpoint for a running AdsPower profile (if available).
+   * This requires AdsPower to expose the debugging port for the profile.
+   * @param {string} profileId
+   * @returns {Promise<string|null>} wsEndpoint or null if not available
+   */
+  async getDevToolsWsEndpoint(profileId) {
+    try {
+      // AdsPower API: /api/v1/browser/active returns ws endpoint in some configs
+      const res = await this.makeRequest('/api/v1/browser/active', 'POST', { user_id: profileId });
+      if (res.success && res.data && res.data.ws && res.data.ws.startsWith('ws://')) {
+        return res.data.ws;
+      }
+      // Some AdsPower configs may return wsEndpoint as res.data.wsEndpoint
+      if (res.success && res.data && res.data.wsEndpoint && res.data.wsEndpoint.startsWith('ws://')) {
+        return res.data.wsEndpoint;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting DevTools wsEndpoint:', error);
+      return null;
+    }
+  }
+
+  // Execute JavaScript in the browser window of a profile (AdsPower Local API)
+  async executeScript(profileId, script) {
+    if (!this.isConnected && !this.demoMode) {
+      return { success: false, error: 'AdsPower not connected' };
+    }
+    if (this.demoMode) {
+      // Simulate execution in demo mode
+      console.log(`[DemoMode] Would execute script for profile ${profileId}:`, script);
+      return { success: true, demo: true };
+    }
+    try {
+      const apiRes = await this.makeRequest('/api/v1/browser/execute_script', 'POST', {
+        user_id: profileId,
+        script: script
+      });
+      return apiRes.success ? { success: true, data: apiRes.data } : { success: false, error: apiRes.error };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
   constructor() {
     this.baseURL = process.env.ADSPOWER_BASE_URL || 'http://local.adspower.net:50325';
     this.apiKey = process.env.ADSPOWER_API_KEY || null;
@@ -405,7 +472,7 @@ async startProfile(profileId, options = {}) {
     // Default launch options
     const launchOptions = {
       user_id: profileId, // CRITICAL: This is the AdsPower profile ID
-      headless: options.headless || 0, // 0 = visible, 1 = headless
+      headless: 0, // 0 = visible, 1 = headless
       disable_password_filling: options.disable_password_filling ? 1 : 0,
       clear_cache_after_closing: options.clear_cache_after_closing ? 1 : 0,
       enable_password_saving: options.enable_password_saving ? 1 : 0,

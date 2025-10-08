@@ -302,9 +302,9 @@ class LifecycleManager {
 
       console.log(`🚀 Launching profile ${profileId} (AdsPower ID: ${profile.ads_power_id})...`);
 
-      // Launch the profile with explicit options
+      // Launch the profile with explicit options (force headless: false for visible browser)
       const launchResult = await this.profileService.launchProfile(profileId, {
-        headless: false,
+        headless: false, // always false so browser is visible
         clear_cache_after_closing: true,
         disable_password_filling: false,
         enable_password_saving: false

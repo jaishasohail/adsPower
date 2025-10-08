@@ -1,14 +1,19 @@
+
+const AdsPowerService = require('./AdsPowerService');
+
 class MouseService {
-  constructor() {
+  constructor(adsPowerServiceInstance = null) {
     this.isMoving = false;
     this.currentPattern = 'natural';
     this.simulationData = {
       movements: [],
       lastActivity: null
     };
+    // Accept AdsPowerService instance for real browser control
+    this.adsPowerService = adsPowerServiceInstance || new AdsPowerService();
   }
 
-  // Simulate human-like mouse movements (data simulation)
+  // Simulate human-like mouse movements (real browser movement via AdsPower)
   async simulateMouseMovement(profileId, options = {}) {
     const {
       pattern = 'natural',
@@ -28,12 +33,14 @@ class MouseService {
       const movements = this.generateMovementPath(pattern, intensity);
       const delayBetweenMoves = duration / movements.length;
 
-      // Simulate the movements with logging
       for (let i = 0; i < movements.length; i++) {
         if (!this.isMoving) break;
-
         const movement = movements[i];
-        
+
+        // Real mouse movement in browser via JS injection
+        const script = `window.dispatchEvent(new MouseEvent('mousemove', {clientX: ${movement.x}, clientY: ${movement.y}, bubbles: true}));`;
+        await this.adsPowerService.executeScript(profileId, script);
+
         // Log the simulated movement
         console.log(`Simulated mouse move to: ${movement.x}, ${movement.y}`);
         this.simulationData.movements.push({
@@ -136,7 +143,7 @@ class MouseService {
     return movements;
   }
 
-  // Simulate scrolling behavior
+  // Simulate scrolling behavior (real browser scroll via AdsPower)
   async simulateScrolling(profileId, options = {}) {
     const {
       direction = 'down',
@@ -146,10 +153,14 @@ class MouseService {
 
     try {
       const scrollSteps = Math.floor(Math.abs(distance) / 100);
-      
+      const scrollAmount = direction === 'down' ? 100 : -100;
+
       for (let i = 0; i < scrollSteps; i++) {
+        // Real scroll in browser via JS injection
+        const script = `window.scrollBy(0, ${scrollAmount});`;
+        await this.adsPowerService.executeScript(profileId, script);
+
         console.log(`Simulated scroll ${direction}: step ${i + 1}/${scrollSteps}`);
-        
         // Vary scroll speed to simulate human behavior
         const delay = speed === 'fast' ? 50 : speed === 'slow' ? 300 : 150;
         await this.sleep(delay + Math.random() * 100);
