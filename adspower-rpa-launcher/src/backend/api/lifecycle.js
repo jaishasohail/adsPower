@@ -38,6 +38,7 @@ router.post('/start', async (req, res) => {
 });
 
 // Stop lifecycle manager
+// LIFECYCLE ENDPOINTS - Stop lifecycle
 router.post('/stop', async (req, res) => {
   try {
     const lifecycleManager = req.app.locals.lifecycleManager;
@@ -49,18 +50,38 @@ router.post('/stop', async (req, res) => {
       });
     }
 
+    console.log('🛑 ========================================');
     console.log('🛑 Received stop lifecycle request');
+    console.log('🛑 ========================================');
     
-    const result = await lifecycleManager.stop();
+    // Set a timeout to prevent hanging
+    const timeoutMs = 120000; // 2 minutes max
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Stop operation timed out after 2 minutes')), timeoutMs);
+    });
     
-    console.log('✅ Stop lifecycle result:', result);
+    // Race between stop operation and timeout
+    const result = await Promise.race([
+      lifecycleManager.stop(),
+      timeoutPromise
+    ]);
+    
+    console.log('✅ Stop lifecycle completed');
+    console.log('📊 Result:', JSON.stringify(result, null, 2));
+    console.log('🛑 ========================================\n');
     
     res.json(result);
+    
   } catch (error) {
+    console.error('❌ ========================================');
     console.error('❌ Error stopping lifecycle:', error);
+    console.error('❌ Stack:', error.stack);
+    console.error('❌ ========================================\n');
+    
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
+      details: 'Check server logs for more information'
     });
   }
 });

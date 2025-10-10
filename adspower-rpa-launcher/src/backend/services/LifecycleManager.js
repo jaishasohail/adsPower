@@ -111,57 +111,125 @@ class LifecycleManager {
 
   async stop() {
   if (!this.isRunning) {
+    console.log('⚠️ Lifecycle manager is not running');
     return { success: false, message: 'Not running' };
   }
 
+  console.log('🛑 ====================================');
+  console.log('🛑 STOPPING LIFECYCLE MANAGER');
+  console.log('🛑 ====================================');
+  
   this.isRunning = false;
-  console.log('🛑 Stopping Lifecycle Manager...');
 
-  // Stop all intervals first
-  Object.values(this.intervals).forEach(interval => {
-    if (interval) clearInterval(interval);
+  // Step 1: Stop all intervals FIRST to prevent new profiles from launching
+  console.log('🛑 Step 1: Stopping all intervals...');
+  Object.keys(this.intervals).forEach(key => {
+    if (this.intervals[key]) {
+      clearInterval(this.intervals[key]);
+      console.log(`   ✓ Stopped ${key} interval`);
+      this.intervals[key] = null;
+    }
   });
 
-  console.log(`🛑 Stopping ${this.activeProfiles.size} active profiles...`);
+  // Step 2: Get all active profile IDs
+  const activeProfileIds = Array.from(this.activeProfiles.keys());
+  console.log(`🛑 Step 2: Found ${activeProfileIds.length} active profiles to stop`);
+
+  if (activeProfileIds.length === 0) {
+    console.log('✅ No active profiles to stop');
+    await this.profileService.logAction('info', 'Lifecycle manager stopped (no active profiles)');
+    return { 
+      success: true, 
+      message: 'Lifecycle manager stopped', 
+      stats: this.stats,
+      profilesStopped: []
+    };
+  }
+
+  // Step 3: Stop all profiles with detailed tracking
+  console.log('🛑 Step 3: Stopping and deleting all profiles...');
   const stopResults = [];
   
-  for (const [profileId, profile] of this.activeProfiles) {
+  for (let i = 0; i < activeProfileIds.length; i++) {
+    const profileId = activeProfileIds[i];
+    const profile = this.activeProfiles.get(profileId);
+    
+    console.log(`🛑 [${i + 1}/${activeProfileIds.length}] Processing profile ${profileId}...`);
+    
     try {
-      console.log(`🛑 Stopping profile ${profileId} (AdsPower: ${profile.adsPowerProfileId})...`);
-      
-      // Stop mouse simulation
-      if (this.mouseService && profile.adsPowerProfileId) {
+      // Stop mouse simulation first
+      if (this.mouseService && profile?.adsPowerProfileId) {
+        console.log(`   🖱️ Stopping mouse for AdsPower ID: ${profile.adsPowerProfileId}`);
         this.mouseService.stopSimulation(profile.adsPowerProfileId);
       }
       
-      // Stop and delete the profile with proper sequencing
+      // Stop and delete the profile
+      console.log(`   🛑 Stopping profile ${profileId}...`);
       await this.stopAndDeleteProfile(profileId);
-      stopResults.push({ profileId, success: true });
       
-      // Add small delay between profiles to avoid rate limiting
-      await this.delay(500);
+      stopResults.push({ 
+        profileId, 
+        success: true,
+        name: profile?.name || 'Unknown'
+      });
+      
+      console.log(`   ✅ Profile ${profileId} stopped successfully`);
+      
+      // Small delay between profiles to avoid overwhelming AdsPower API
+      if (i < activeProfileIds.length - 1) {
+        console.log(`   ⏳ Waiting 1 second before next profile...`);
+        await this.delay(1000);
+      }
       
     } catch (error) {
-      console.error(`❌ Error stopping profile ${profileId}:`, error);
-      stopResults.push({ profileId, success: false, error: error.message });
+      console.error(`   ❌ Error stopping profile ${profileId}:`, error.message);
+      stopResults.push({ 
+        profileId, 
+        success: false, 
+        error: error.message,
+        name: profile?.name || 'Unknown'
+      });
+      
+      // Continue with other profiles even if one fails
     }
   }
 
+  // Step 4: Clear all collections
+  console.log('🛑 Step 4: Clearing collections...');
   this.activeProfiles.clear();
   this.completedProfiles.clear();
+  this.profileQueue = [];
+  console.log('   ✓ Collections cleared');
 
+  // Step 5: Log the action
   await this.profileService.logAction('info', 'Lifecycle manager stopped', null, {
     profilesStopped: stopResults.length,
+    successful: stopResults.filter(r => r.success).length,
+    failed: stopResults.filter(r => !r.success).length,
     stats: this.stats
   });
   
-  console.log('✅ Lifecycle manager stopped successfully');
+  // Step 6: Summary
+  const successful = stopResults.filter(r => r.success).length;
+  const failed = stopResults.filter(r => !r.success).length;
+  
+  console.log('🛑 ====================================');
+  console.log('✅ LIFECYCLE MANAGER STOPPED');
+  console.log(`   Total profiles: ${stopResults.length}`);
+  console.log(`   Successful: ${successful}`);
+  console.log(`   Failed: ${failed}`);
+  console.log('🛑 ====================================');
   
   return { 
     success: true, 
     message: 'Lifecycle manager stopped', 
     stats: this.stats,
-    profilesStopped: stopResults
+    profilesStopped: stopResults,
+    summary: {
+      total: stopResults.length,
+      successful,
+      failed
+    }
   };
 }
 
@@ -556,62 +624,119 @@ class LifecycleManager {
   }
 
   async stopAndDeleteProfile(profileId) {
+  const profile = this.activeProfiles.get(profileId) || 
+                 Array.from(this.activeProfiles.values()).find(p => p.profileId === profileId);
+
+  console.log(`🔄 [LIFECYCLE] ========================================`);
+  console.log(`🔄 [LIFECYCLE] Stopping and deleting profile ${profileId}`);
+  if (profile) {
+    console.log(`🔄 [LIFECYCLE] Name: ${profile.name}`);
+    console.log(`🔄 [LIFECYCLE] AdsPower ID: ${profile.adsPowerProfileId}`);
+  }
+  console.log(`🔄 [LIFECYCLE] ========================================`);
+
   try {
-    const profile = this.activeProfiles.get(profileId) || 
-                   Array.from(this.activeProfiles.values()).find(p => p.profileId === profileId);
-
-    console.log(`🔄 [LIFECYCLE] Stopping and deleting profile ${profileId}...`);
-
-    // Stop mouse simulation
+    // Step 1: Stop mouse simulation immediately
     if (this.mouseService && profile?.adsPowerProfileId) {
-      this.mouseService.stopSimulation(profile.adsPowerProfileId);
-      console.log(`🖱️ [LIFECYCLE] Stopped mouse simulation for ${profile.adsPowerProfileId}`);
-    }
-
-    // Remove from active profiles immediately to free up slot
-    this.activeProfiles.delete(profileId);
-    this.completedProfiles.delete(profileId);
-
-    // Free up proxy immediately
-    if (profile?.proxyId) {
-      await this.db.run(
-        'UPDATE proxies SET assigned_profile_id = NULL WHERE id = ?',
-        [profile.proxyId]
-      );
-    }
-
-    // Now handle AdsPower cleanup: stop first, then force delete as fallback
-    if (profile?.adsPowerProfileId) {
       try {
-        console.log(`🛑 [LIFECYCLE] Stopping AdsPower profile ${profile.adsPowerProfileId}...`);
-        await this.adsPowerService.stopProfile(profile.adsPowerProfileId);
-        // Extra cushion before delete
-        await this.delay(1500);
-        console.log(`🔨 [LIFECYCLE] Force deleting AdsPower profile ${profile.adsPowerProfileId}...`);
-        const result = await this.adsPowerService.forceDeleteProfile(profile.adsPowerProfileId, 3);
-        
-        if (result.success) {
-          console.log(`✅ [LIFECYCLE] Successfully deleted AdsPower profile ${profile.adsPowerProfileId}`);
-        } else {
-          console.warn(`⚠️ [LIFECYCLE] Could not delete AdsPower profile ${profile.adsPowerProfileId}:`, result.error);
-        }
-      } catch (error) {
-        console.warn(`⚠️ [LIFECYCLE] Error during force delete:`, error.message);
+        console.log(`🖱️ [LIFECYCLE] Step 1: Stopping mouse simulation...`);
+        this.mouseService.stopSimulation(profile.adsPowerProfileId);
+        console.log(`✅ [LIFECYCLE] Mouse simulation stopped`);
+      } catch (mouseError) {
+        console.warn(`⚠️ [LIFECYCLE] Mouse stop error (non-critical):`, mouseError.message);
       }
     }
 
-    // Delete from database
-    if (this.settings.autoDelete) {
-      console.log(`🗑️ [LIFECYCLE] Deleting profile ${profileId} from database...`);
-      await this.profileService.deleteProfile(profileId);
-      console.log(`✅ [LIFECYCLE] Profile ${profileId} deleted from database`);
-    } else {
-      await this.profileService.updateProfileStatus(profileId, 'stopped');
+    // Step 2: Remove from active profiles to free up slot immediately
+    console.log(`🗑️ [LIFECYCLE] Step 2: Removing from active profiles...`);
+    this.activeProfiles.delete(profileId);
+    this.completedProfiles.delete(profileId);
+    console.log(`✅ [LIFECYCLE] Removed from active profiles`);
+
+    // Step 3: Free up proxy
+    if (profile?.proxyId) {
+      try {
+        console.log(`🔓 [LIFECYCLE] Step 3: Freeing proxy ${profile.proxyId}...`);
+        await this.db.run(
+          'UPDATE proxies SET assigned_profile_id = NULL WHERE id = ?',
+          [profile.proxyId]
+        );
+        console.log(`✅ [LIFECYCLE] Proxy freed`);
+      } catch (proxyError) {
+        console.warn(`⚠️ [LIFECYCLE] Proxy free error (non-critical):`, proxyError.message);
+      }
     }
 
+    // Step 4: Stop and delete AdsPower profile
+    if (profile?.adsPowerProfileId) {
+      try {
+        console.log(`🛑 [LIFECYCLE] Step 4: Stopping AdsPower browser...`);
+        const stopResult = await this.adsPowerService.stopProfile(profile.adsPowerProfileId);
+        
+        if (stopResult.success) {
+          console.log(`✅ [LIFECYCLE] Browser stopped successfully`);
+        } else {
+          console.log(`ℹ️ [LIFECYCLE] Stop returned: ${stopResult.error || 'unknown'}`);
+        }
+
+        // Wait for browser to fully close
+        console.log(`⏳ [LIFECYCLE] Waiting 2 seconds for browser to close...`);
+        await this.delay(2000);
+
+        // Force delete with retries
+        console.log(`🔨 [LIFECYCLE] Step 5: Force deleting AdsPower profile...`);
+        const deleteResult = await this.adsPowerService.forceDeleteProfile(
+          profile.adsPowerProfileId, 
+          3 // max attempts
+        );
+        
+        if (deleteResult.success) {
+          console.log(`✅ [LIFECYCLE] AdsPower profile deleted`);
+        } else {
+          console.warn(`⚠️ [LIFECYCLE] Delete warning: ${deleteResult.error}`);
+          console.warn(`⚠️ [LIFECYCLE] Profile may need manual cleanup in AdsPower`);
+        }
+
+      } catch (adsError) {
+        console.error(`❌ [LIFECYCLE] AdsPower error:`, adsError.message);
+        // Continue with database cleanup even if AdsPower fails
+      }
+    }
+
+    // Step 6: Delete from database
+    if (this.settings.autoDelete) {
+      try {
+        console.log(`🗑️ [LIFECYCLE] Step 6: Deleting from database...`);
+        await this.profileService.deleteProfile(profileId);
+        console.log(`✅ [LIFECYCLE] Deleted from database`);
+      } catch (dbError) {
+        console.error(`❌ [LIFECYCLE] Database delete error:`, dbError.message);
+        // Try to at least update status
+        try {
+          await this.profileService.updateProfileStatus(profileId, 'error');
+        } catch (statusError) {
+          console.error(`❌ [LIFECYCLE] Status update also failed:`, statusError.message);
+        }
+      }
+    } else {
+      try {
+        console.log(`📝 [LIFECYCLE] Step 6: Updating status to stopped...`);
+        await this.profileService.updateProfileStatus(profileId, 'stopped');
+        console.log(`✅ [LIFECYCLE] Status updated`);
+      } catch (statusError) {
+        console.error(`❌ [LIFECYCLE] Status update error:`, statusError.message);
+      }
+    }
+
+    console.log(`✅ [LIFECYCLE] Profile ${profileId} cleanup completed`);
+    console.log(`🔄 [LIFECYCLE] ========================================\n`);
+
   } catch (error) {
-    console.error(`❌ [LIFECYCLE] Error stopping/deleting profile ${profileId}:`, error);
+    console.error(`❌ [LIFECYCLE] Critical error stopping/deleting profile ${profileId}:`, error);
+    console.error(`❌ [LIFECYCLE] Stack trace:`, error.stack);
+    console.log(`🔄 [LIFECYCLE] ========================================\n`);
     // Don't throw - we want to continue with other profiles
+    // Just log the error and move on
   }
 }
 

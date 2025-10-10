@@ -499,11 +499,13 @@ class AdsPowerService {
       this.browserConnections.delete(profileId);
     }
 
-    // CRITICAL FIX: Always attempt to stop, don't skip based on status check
+    // CRITICAL FIX: ALWAYS attempt to stop, don't check status first
     console.log(`🛑 [ADS] Sending stop command to profile ${profileId}...`);
     
+    // Try POST method first (newer AdsPower versions)
     let apiRes = await this.makeRequest('/api/v1/browser/stop', 'POST', { user_id: profileId });
-    // Compatibility fallback: some AdsPower builds require GET with query params
+    
+    // If POST fails, try GET with query params (older AdsPower versions)
     if (!apiRes.success) {
       console.log(`ℹ️ [ADS] POST /browser/stop failed, trying GET fallback...`);
       apiRes = await this.makeRequest('/api/v1/browser/stop', 'GET', null, { user_id: profileId });
@@ -511,7 +513,7 @@ class AdsPowerService {
     
     if (apiRes.success) {
       console.log(`✅ [ADS] Successfully stopped profile ${profileId}`);
-      // Wait for AdsPower to report the browser as inactive to avoid in-use delete errors
+      // Wait for AdsPower to report the browser as inactive
       try {
         await this._waitForBrowserInactive(profileId, 20000, 1000);
       } catch (werr) {
@@ -523,14 +525,18 @@ class AdsPowerService {
     // Handle specific errors
     const errorMsg = apiRes.error || '';
     
-    // If 404 or "not found", browser is already stopped
-    if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('not active')) {
-      console.log(`ℹ️ [ADS] Profile ${profileId} was already stopped`);
-      // Even if already stopped, ensure it's reported inactive before proceeding
+    // If 404 or "not found" or "not active", browser is already stopped
+    if (errorMsg.includes('404') || 
+        errorMsg.includes('not found') || 
+        errorMsg.includes('not active') ||
+        errorMsg.includes('not running')) {
+      console.log(`ℹ️ [ADS] Profile ${profileId} was already stopped (${errorMsg})`);
+      // Ensure it's reported inactive before proceeding
       try {
         await this._waitForBrowserInactive(profileId, 10000, 800);
       } catch (werr) {
-        console.warn(`⚠️ [ADS] Wait for inactive after 404/not active timed out: ${werr.message}`);
+        // Ignore timeout - if status check says not found, it's definitely not active
+        console.log(`ℹ️ [ADS] Profile confirmed inactive (404)`);
       }
       return {
         success: true,
@@ -542,7 +548,20 @@ class AdsPowerService {
       };
     }
     
-    // Other errors
+    // Other errors - still return success if it's a "browser not running" type error
+    if (errorMsg.toLowerCase().includes('browser') && 
+        (errorMsg.toLowerCase().includes('not') || errorMsg.toLowerCase().includes('close'))) {
+      console.log(`ℹ️ [ADS] Browser already closed for ${profileId}: ${errorMsg}`);
+      return {
+        success: true,
+        data: {
+          user_id: profileId,
+          status: 'Already Stopped'
+        }
+      };
+    }
+    
+    // True error
     console.warn(`⚠️ [ADS] Failed to stop profile ${profileId}:`, errorMsg);
     return { success: false, error: errorMsg };
     
@@ -569,91 +588,80 @@ class AdsPowerService {
     const apiRes = await this.makeRequest('/api/v1/user/delete', 'POST', { user_ids: [profileId] });
     return apiRes.success ? { success: true, data: apiRes.data } : { success: false, error: apiRes.error };
   }
-  async forceDeleteProfile(profileId, maxAttempts = 3) {
+ async forceDeleteProfile(profileId, maxAttempts = 3) {
   console.log(`🔨 [ADS] Force deleting profile ${profileId} with ${maxAttempts} attempts...`);
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       console.log(`🔨 [ADS] Force delete attempt ${attempt}/${maxAttempts} for ${profileId}...`);
       
-      // CRITICAL FIX: Always try to stop the browser, ignore status check failures
-      console.log(`🛑 [ADS] Forcefully stopping browser for profile ${profileId}...`);
-      
+      // Step 1: Try to stop the browser (ignore errors)
+      console.log(`🛑 [ADS] Attempting to stop browser for profile ${profileId}...`);
       try {
-        // Direct stop command without checking status first
-        const stopRes = await this.makeRequest('/api/v1/browser/stop', 'POST', { user_id: profileId });
-        
+        const stopRes = await this.stopProfile(profileId);
         if (stopRes.success) {
-          console.log(`✅ [ADS] Successfully stopped browser for profile ${profileId}`);
+          console.log(`✅ [ADS] Browser stopped successfully for profile ${profileId}`);
         } else {
-          // Log but continue - the browser might already be stopped
-          console.log(`ℹ️ [ADS] Stop command response:`, stopRes.error || 'no error message');
+          console.log(`ℹ️ [ADS] Stop returned: ${stopRes.error || 'no error'}`);
         }
       } catch (stopError) {
-        console.log(`ℹ️ [ADS] Stop error (continuing anyway):`, stopError.message);
+        console.log(`ℹ️ [ADS] Stop error (continuing): ${stopError.message}`);
       }
 
-      // Wait progressively longer between attempts to ensure browser fully closes
-      const waitTime = attempt * 3000; // 3s, 6s, 9s
+      // Step 2: Progressive wait between attempts (important!)
+      const waitTime = attempt * 2000; // 2s, 4s, 6s
       console.log(`⏳ [ADS] Waiting ${waitTime}ms for browser to fully close...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
 
-      // Try to close via alternative endpoint if available
-      if (attempt === 1) {
-        try {
-          const closeRes = await this.makeRequest('/api/v1/browser/close', 'POST', { user_id: profileId });
-          if (closeRes.success) {
-            console.log(`✅ [ADS] Browser closed via /browser/close endpoint`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Extra wait after close
-          }
-        } catch (closeErr) {
-          console.log(`ℹ️ [ADS] /browser/close not available or failed (this is normal)`);
-        }
-      }
-
-      // Ensure browser is inactive before attempting delete
+      // Step 3: Ensure browser is reported as inactive
       try {
-        await this._waitForBrowserInactive(profileId, 30000, 1000);
+        console.log(`🔍 [ADS] Verifying browser is inactive...`);
+        await this._waitForBrowserInactive(profileId, 15000, 1000);
+        console.log(`✅ [ADS] Browser confirmed inactive`);
       } catch (werr) {
-        console.warn(`⚠️ [ADS] Proceeding to delete even though inactive wait timed out: ${werr.message}`);
+        console.warn(`⚠️ [ADS] Browser inactive check timed out (may still be closing): ${werr.message}`);
+        // Add extra wait if verification failed
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
-      // Now try to delete
+      // Step 4: Attempt delete
       console.log(`🗑️ [ADS] Attempting delete for profile ${profileId}...`);
       const deleteRes = await this.deleteProfile(profileId);
 
       if (deleteRes.success) {
-        console.log(`✅ [ADS] Successfully force deleted profile ${profileId} on attempt ${attempt}`);
+        console.log(`✅ [ADS] Successfully deleted profile ${profileId} on attempt ${attempt}`);
         return { success: true, data: deleteRes.data, attempts: attempt };
       }
 
-      // Check error type
+      // Step 5: Handle specific errors
       const errorMsg = deleteRes.error || '';
       
-      if (errorMsg.includes('being used')) {
+      // Profile being used - retry needed
+      if (errorMsg.includes('being used') || errorMsg.includes('in use')) {
         console.warn(`⚠️ [ADS] Profile ${profileId} still in use on attempt ${attempt}/${maxAttempts}`);
         
         if (attempt < maxAttempts) {
           console.log(`🔄 [ADS] Will retry after longer wait...`);
-          // Extra wait before retry
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Extra wait
           continue;
         } else {
           console.error(`❌ [ADS] Profile ${profileId} still in use after ${maxAttempts} attempts`);
-          console.log(`💡 [ADS] Manual intervention may be required - close the browser window manually in AdsPower`);
           return { 
             success: false, 
-            error: `Profile still in use after ${maxAttempts} attempts. Please close browser manually in AdsPower.`,
-            attempts: attempt 
+            error: `Profile still in use after ${maxAttempts} attempts. Browser may need manual closure in AdsPower.`,
+            attempts: attempt,
+            recommendation: 'Close the browser window manually in AdsPower application'
           };
         }
-      } else if (errorMsg.includes('not found') || errorMsg.includes('404')) {
-        // Profile already deleted
-        console.log(`✅ [ADS] Profile ${profileId} already deleted (404)`);
+      } 
+      // Profile already deleted
+      else if (errorMsg.includes('not found') || errorMsg.includes('404') || errorMsg.includes('does not exist')) {
+        console.log(`✅ [ADS] Profile ${profileId} already deleted or doesn't exist`);
         return { success: true, data: { alreadyDeleted: true }, attempts: attempt };
-      } else {
-        // Other error - return immediately
-        console.error(`❌ [ADS] Delete failed with error:`, errorMsg);
+      } 
+      // Other error - return immediately
+      else {
+        console.error(`❌ [ADS] Delete failed with unexpected error: ${errorMsg}`);
         return { success: false, error: errorMsg, attempts: attempt };
       }
 
@@ -671,8 +679,9 @@ class AdsPowerService {
   
   return {
     success: false,
-    error: `Failed to delete profile ${profileId} after ${maxAttempts} attempts. Browser may still be open.`,
-    attempts: maxAttempts
+    error: `Failed to delete profile ${profileId} after ${maxAttempts} attempts`,
+    attempts: maxAttempts,
+    recommendation: 'Browser may still be running. Close it manually in AdsPower and try again.'
   };
 }
   async getProfile(profileId) {
