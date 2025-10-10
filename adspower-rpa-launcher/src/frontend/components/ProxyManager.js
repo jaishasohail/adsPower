@@ -196,16 +196,16 @@ const ProxyManager = ({ onStatusUpdate }) => {
               className="btn btn-success"
               onClick={() => setShowBulkModal(true)}
             >
-              📦 Bulk Import
+              <i className="fas fa-box-open" style={{ marginRight: '6px' }}></i> Bulk Import
             </button>
             <button
               className="btn btn-primary"
               onClick={() => setShowCreateModal(true)}
             >
-              ➕ Add Proxy
+              <i className="fas fa-plus-circle" style={{ marginRight: '6px' }}></i> Add Proxy
             </button>
             <button className="btn btn-secondary" onClick={fetchProxies}>
-              🔄 Refresh
+              <i className="fas fa-sync-alt" style={{ marginRight: '6px' }}></i> Refresh
             </button>
           </div>
         </div>
@@ -264,7 +264,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
                         disabled={loading}
                         style={{ fontSize: '0.8rem', padding: '4px 8px' }}
                       >
-                        🔍 Test
+                        <i className="fas fa-search"></i> Test
                       </button>
                       <button
                         className="btn btn-danger"
@@ -273,7 +273,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
                         style={{ fontSize: '0.8rem', padding: '4px 8px' }}
                         title={proxy.assigned_profile_id ? 'Cannot delete assigned proxy' : 'Delete proxy'}
                       >
-                        🗑️ Delete
+                        <i className="fas fa-trash-alt"></i> Delete
                       </button>
                     </div>
                   </td>
@@ -366,14 +366,14 @@ const ProxyManager = ({ onStatusUpdate }) => {
                   className="btn btn-secondary"
                   onClick={() => setShowCreateModal(false)}
                 >
-                  Cancel
+                  <i className="fas fa-times"></i> Cancel
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
                   disabled={loading}
                 >
-                  {loading ? <span className="loading-spinner"></span> : 'Add Proxy'}
+                  {loading ? <span className="loading-spinner"></span> : <><i className="fas fa-plus-circle"></i> Add Proxy</>}
                 </button>
               </div>
             </form>
@@ -422,14 +422,14 @@ const ProxyManager = ({ onStatusUpdate }) => {
                   className="btn btn-secondary"
                   onClick={() => setShowBulkModal(false)}
                 >
-                  Cancel
+                  <i className="fas fa-times"></i> Cancel
                 </button>
                 <button
                   type="submit"
                   className="btn btn-success"
                   disabled={loading}
                 >
-                  {loading ? <span className="loading-spinner"></span> : 'Import Proxies'}
+                  {loading ? <span className="loading-spinner"></span> : <><i className="fas fa-box-open"></i> Import Proxies</>}
                 </button>
               </div>
             </form>
