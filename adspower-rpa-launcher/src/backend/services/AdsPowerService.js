@@ -506,6 +506,12 @@ class AdsPowerService {
     
     if (apiRes.success) {
       console.log(`✅ [ADS] Successfully stopped profile ${profileId}`);
+      // Wait for AdsPower to report the browser as inactive to avoid in-use delete errors
+      try {
+        await this._waitForBrowserInactive(profileId, 20000, 1000);
+      } catch (werr) {
+        console.warn(`⚠️ [ADS] Wait for inactive timed out: ${werr.message}`);
+      }
       return { success: true, data: apiRes.data };
     }
     
@@ -515,6 +521,12 @@ class AdsPowerService {
     // If 404 or "not found", browser is already stopped
     if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('not active')) {
       console.log(`ℹ️ [ADS] Profile ${profileId} was already stopped`);
+      // Even if already stopped, ensure it's reported inactive before proceeding
+      try {
+        await this._waitForBrowserInactive(profileId, 10000, 800);
+      } catch (werr) {
+        console.warn(`⚠️ [ADS] Wait for inactive after 404/not active timed out: ${werr.message}`);
+      }
       return {
         success: true,
         data: {
@@ -592,6 +604,13 @@ class AdsPowerService {
         } catch (closeErr) {
           console.log(`ℹ️ [ADS] /browser/close not available or failed (this is normal)`);
         }
+      }
+
+      // Ensure browser is inactive before attempting delete
+      try {
+        await this._waitForBrowserInactive(profileId, 20000, 1000);
+      } catch (werr) {
+        console.warn(`⚠️ [ADS] Proceeding to delete even though inactive wait timed out: ${werr.message}`);
       }
 
       // Now try to delete
@@ -773,6 +792,28 @@ class AdsPowerService {
       return { success: true, status: apiRes.data.list[0].status };
     }
     return { success: false, error: 'Profile not found' };
+  }
+
+  // Wait until AdsPower reports browser is not active
+  async _waitForBrowserInactive(profileId, timeoutMs = 20000, pollIntervalMs = 1000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const statusRes = await this.makeRequest('/api/v1/browser/active', 'POST', { user_id: profileId });
+        if (statusRes.success) {
+          const isActive = statusRes.data?.status === 'Active';
+          if (!isActive) return true;
+        } else {
+          // If the endpoint errors with not found, consider inactive
+          const msg = statusRes.error || '';
+          if (msg.includes('404') || /not found|not active/i.test(msg)) return true;
+        }
+      } catch (e) {
+        // On network/API errors, wait and retry
+      }
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+    throw new Error('Timed out waiting for browser to become inactive');
   }
 
   // IMPROVED: Better error handling and WebSocket management

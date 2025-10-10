@@ -124,6 +124,7 @@ router.post('/:id/stop', async (req, res) => {
   try {
     const profileService = req.app.locals.profileService;
     const mouseService = req.app.locals.mouseService;
+    const db = req.app.locals.db;
     const profileId = parseInt(req.params.id);
 
     // Validate profile ID
@@ -134,10 +135,18 @@ router.post('/:id/stop', async (req, res) => {
       });
     }
 
-    // Stop mouse simulation first
+    // Stop mouse simulation first using AdsPower ID if available
     if (mouseService) {
-      mouseService.stopSimulation(profileId);
-      console.log(`🛑 Stopped mouse simulation for profile ${profileId}`);
+      try {
+        const profile = await db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+        const adsPowerId = profile?.ads_power_id || profileId;
+        mouseService.stopSimulation(adsPowerId);
+        console.log(`🛑 Stopped mouse simulation for AdsPower ID ${adsPowerId} (profile ${profileId})`);
+      } catch (e) {
+        // Fallback
+        mouseService.stopSimulation(profileId);
+        console.log(`🛑 Stopped mouse simulation for profile ${profileId} (fallback)`);
+      }
     }
 
     // Use the integrated ProfileService stop method
