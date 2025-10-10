@@ -1,8 +1,9 @@
 class LifecycleManager {
-  constructor(profileService, adsPowerService, mouseService, db) {
+  constructor(profileService, adsPowerService, mouseService, db, stickyIpService) {
     this.profileService = profileService;
     this.adsPowerService = adsPowerService;
     this.mouseService = mouseService;
+    this.stickyIpService = stickyIpService;
     this.db = db;
     this.isRunning = false;
     this.activeProfiles = new Map();
@@ -20,7 +21,8 @@ class LifecycleManager {
       autoDelete: true,
       instantRecycle: true,
       humanLikeActivity: true,
-      proxyRotation: true
+      proxyRotation: true,
+      stickyIpEnabled: true
     };
 
     this.stats = {
@@ -79,6 +81,24 @@ class LifecycleManager {
     console.log(`🎯 Target URL: ${this.settings.targetUrl}`);
     console.log(`🔌 AdsPower Status: ${isConnected ? 'Connected' : 'Demo Mode'}`);
     
+    // if (this.settings.stickyIpEnabled && this.stickyIpService) {
+    //   this.stickyIpService.startMonitoring();
+    //   // React to IP changes: close all active browsers immediately
+    //   this.stickyIpService.onChange(async ({ oldIp, newIp }) => {
+    //     try {
+    //       console.log(`🧲 StickyIP: Change detected ${oldIp} -> ${newIp}. Closing active browsers...`);
+    //       for (const [pid, p] of this.activeProfiles) {
+    //         try {
+    //           await this.stopAndDeleteProfile(pid);
+    //         } catch (e) {
+    //           console.warn(`⚠️ StickyIP: Failed closing profile ${pid}:`, e.message);
+    //         }
+    //       }
+    //       console.log('🧲 StickyIP: Browser closed due to IP change.');
+    //     } catch (e) {}
+    //   });
+    // }
+
     this.startLauncher();
     this.startMonitor();
     this.startRecycler();
@@ -276,6 +296,19 @@ class LifecycleManager {
     let profileId = null;
 
     try {
+      // Sticky IP pre-launch gating
+      // if (this.settings.stickyIpEnabled && this.stickyIpService) {
+      //   const gate = await this.stickyIpService.ensureStableBeforeLaunch();
+      //   if (!gate.proceed) {
+      //     console.log('🧲 StickyIP: IP changed – browser launch aborted.');
+      //     return null;
+      //   }
+      //   if (this.stickyIpService.hasIpBeenUsed(gate.ip)) {
+      //     console.log(`🧲 StickyIP: IP ${gate.ip} already used in previous session, skipping.`);
+      //     return null;
+      //   }
+      // }
+
       const isConnected = await this.adsPowerService.checkConnection();
       if (!isConnected && !this.adsPowerService.demoMode) {
         console.error('❌ AdsPower not connected');
@@ -430,6 +463,14 @@ class LifecycleManager {
 
       this.stats.totalLaunched++;
       console.log(`✅ Profile ${profileId} operational (Duration: ${Math.round(taskDuration/1000)}s)`);
+
+      // Mark IP as used for sticky IP logic
+      if (this.settings.stickyIpEnabled && this.stickyIpService) {
+        try {
+          const ip = await this.stickyIpService.getCurrentIP();
+          if (ip) await this.stickyIpService.markIpUsed(ip);
+        } catch (e) {}
+      }
       
       return profile;
 
@@ -539,9 +580,13 @@ class LifecycleManager {
       );
     }
 
-    // Now handle AdsPower cleanup (use force delete)
+    // Now handle AdsPower cleanup: stop first, then force delete as fallback
     if (profile?.adsPowerProfileId) {
       try {
+        console.log(`🛑 [LIFECYCLE] Stopping AdsPower profile ${profile.adsPowerProfileId}...`);
+        await this.adsPowerService.stopProfile(profile.adsPowerProfileId);
+        // Extra cushion before delete
+        await this.delay(1500);
         console.log(`🔨 [LIFECYCLE] Force deleting AdsPower profile ${profile.adsPowerProfileId}...`);
         const result = await this.adsPowerService.forceDeleteProfile(profile.adsPowerProfileId, 3);
         

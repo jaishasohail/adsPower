@@ -10,6 +10,7 @@ const ProfileService = require('./services/ProfileService');
 const AdsPowerService = require('./services/AdsPowerService');
 const MouseService = require('./services/MouseService');
 const LifecycleManager = require('./services/LifecycleManager');
+const StickyIPService = require('./services/StickyIPService');
 const lifecycleRoutes = require('./api/lifecycle');
 
 const app = express();
@@ -27,7 +28,8 @@ const db = new Database();
 const profileService = new ProfileService(db);
 const adsPowerService = new AdsPowerService();
 const mouseService = new MouseService();
-const lifecycleManager = new LifecycleManager(profileService, adsPowerService, mouseService, db);
+const stickyIpService = new StickyIPService({ enabled: true, pollIntervalMs: 1000 });
+const lifecycleManager = new LifecycleManager(profileService, adsPowerService, mouseService, db, stickyIpService);
 
 // Make services available to routes
 app.locals.profileService = profileService;
@@ -35,6 +37,7 @@ app.locals.adsPowerService = adsPowerService;
 app.locals.mouseService = mouseService;
 app.locals.lifecycleManager = lifecycleManager;
 app.locals.db = db;
+app.locals.stickyIpService = stickyIpService;
 
 // API Routes
 app.use('/api/profiles', profileRoutes);

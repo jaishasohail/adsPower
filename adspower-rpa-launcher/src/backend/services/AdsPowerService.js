@@ -502,7 +502,12 @@ class AdsPowerService {
     // CRITICAL FIX: Always attempt to stop, don't skip based on status check
     console.log(`🛑 [ADS] Sending stop command to profile ${profileId}...`);
     
-    const apiRes = await this.makeRequest('/api/v1/browser/stop', 'POST', { user_id: profileId });
+    let apiRes = await this.makeRequest('/api/v1/browser/stop', 'POST', { user_id: profileId });
+    // Compatibility fallback: some AdsPower builds require GET with query params
+    if (!apiRes.success) {
+      console.log(`ℹ️ [ADS] POST /browser/stop failed, trying GET fallback...`);
+      apiRes = await this.makeRequest('/api/v1/browser/stop', 'GET', null, { user_id: profileId });
+    }
     
     if (apiRes.success) {
       console.log(`✅ [ADS] Successfully stopped profile ${profileId}`);
@@ -608,7 +613,7 @@ class AdsPowerService {
 
       // Ensure browser is inactive before attempting delete
       try {
-        await this._waitForBrowserInactive(profileId, 20000, 1000);
+        await this._waitForBrowserInactive(profileId, 30000, 1000);
       } catch (werr) {
         console.warn(`⚠️ [ADS] Proceeding to delete even though inactive wait timed out: ${werr.message}`);
       }
