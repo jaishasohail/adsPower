@@ -137,74 +137,13 @@ const Sidebar = ({ activeView, onViewChange, systemStatus, isOpen, onClose }) =>
           </div>
 
           {/* System Status Section */}
-          <div className="nav-section">
-            <div 
-              className="nav-section-header clickable"
-              onClick={() => toggleSection('status')}
-            >
-              <span className="nav-section-title">System Status</span>
-              <span className={`section-toggle ${expandedSections.status ? 'expanded' : ''}`}>
-                <FiChevronDown />
-              </span>
-            </div>
-            {expandedSections.status && (
-              <div className="status-cards">
-                <div className="status-card">
-                  <div className="status-card-icon"><FiUser /></div>
-                  <div className="status-card-content">
-                    <div className="status-card-value">{profiles.active}</div>
-                    <div className="status-card-label">Active</div>
-                  </div>
-                </div>
-                <div className="status-card">
-                  <div className="status-card-icon"><FiServer /></div>
-                  <div className="status-card-content">
-                    <div className="status-card-value">{proxies.available}</div>
-                    <div className="status-card-label">Available</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          
 
           {/* Quick Actions */}
-          <div className="nav-section">
-            <div 
-              className="nav-section-header clickable"
-              onClick={() => toggleSection('actions')}
-            >
-              <span className="nav-section-title">Quick Actions</span>
-              <span className={`section-toggle ${expandedSections.actions ? 'expanded' : ''}`}>
-                <FiChevronDown />
-              </span>
-            </div>
-            {expandedSections.actions && (
-              <div className="quick-actions">
-                {quickActions.map(action => (
-                  <button
-                    key={action.id}
-                    className={`quick-action-btn ${action.color}`}
-                    onClick={() => console.log(`Quick action: ${action.id}`)}
-                  >
-                    <span className="action-icon">{action.icon}</span>
-                    <span className="action-label">{action.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          
         </div>
 
-        <div className="sidebar-footer">
-          <div className="connection-status">
-            <div className={`connection-indicator ${systemStatus.isConnected ? 'connected' : 'disconnected'}`}>
-              <div className="connection-pulse"></div>
-            </div>
-            <span className="connection-text">
-              {systemStatus.isConnected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
-        </div>
+        
       </nav>
     </>
   );

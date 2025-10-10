@@ -161,7 +161,7 @@ const ProfileManager = ({ onStatusUpdate }) => {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/profiles/lifecycle/stop', {
+  const response = await fetch('http://localhost:3001/api/lifecycle/stop', {
         method: 'POST',
       });
 

@@ -397,14 +397,25 @@ router.post('/batch', async (req, res) => {
     );
 
     // Start the lifecycle manager (it will create and launch profiles automatically)
+    // But also launch all profiles together and asynchronously
     const startResult = await lifecycleManager.start();
+
+    // Get all created profile IDs (assuming lifecycleManager creates them in DB)
+    const createdProfiles = await db.all('SELECT id FROM profiles ORDER BY id DESC LIMIT ?', [count]);
+    const profileIds = createdProfiles.map(p => p.id);
+
+    // Launch all profiles asynchronously
+    const launchResults = await Promise.allSettled(
+      profileIds.map(id => profileService.launchProfile(id, { headless: false }))
+    );
 
     res.json({ 
       success: true, 
       data: {
-        message: `Lifecycle manager started with ${count} profile slots`,
+        message: `Lifecycle manager started with ${count} profile slots. All profiles launched asynchronously.`,
         settings: lifecycleManager.settings,
-        startResult
+        startResult,
+        launchResults
       }
     });
 
@@ -462,8 +473,6 @@ router.post('/lifecycle/stop', async (req, res) => {
     });
   }
 });
-
-// LIFECYCLE ENDPOINTS - Emergency stop
 router.post('/lifecycle/emergency-stop', async (req, res) => {
   try {
     const lifecycleManager = req.app.locals.lifecycleManager;

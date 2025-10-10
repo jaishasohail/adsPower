@@ -1,4 +1,12 @@
+
 import React, { useState, useEffect } from 'react';
+import {
+  FiBox,
+  FiPlusCircle,
+  FiRefreshCw,
+  FiSearch,
+  FiTrash2
+} from 'react-icons/fi';
 
 const ProxyManager = ({ onStatusUpdate }) => {
   const [proxies, setProxies] = useState([]);
@@ -196,16 +204,16 @@ const ProxyManager = ({ onStatusUpdate }) => {
               className="btn btn-success"
               onClick={() => setShowBulkModal(true)}
             >
-              <i className="fas fa-box-open" style={{ marginRight: '6px' }}></i> Bulk Import
+              <FiBox style={{ marginRight: '6px' }} /> Bulk Import
             </button>
             <button
               className="btn btn-primary"
               onClick={() => setShowCreateModal(true)}
             >
-              <i className="fas fa-plus-circle" style={{ marginRight: '6px' }}></i> Add Proxy
+              <FiPlusCircle style={{ marginRight: '6px' }} /> Add Proxy
             </button>
             <button className="btn btn-secondary" onClick={fetchProxies}>
-              <i className="fas fa-sync-alt" style={{ marginRight: '6px' }}></i> Refresh
+              <FiRefreshCw style={{ marginRight: '6px' }} /> Refresh
             </button>
           </div>
         </div>
@@ -264,7 +272,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
                         disabled={loading}
                         style={{ fontSize: '0.8rem', padding: '4px 8px' }}
                       >
-                        <i className="fas fa-search"></i> Test
+                        <FiSearch /> Test
                       </button>
                       <button
                         className="btn btn-danger"
@@ -273,7 +281,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
                         style={{ fontSize: '0.8rem', padding: '4px 8px' }}
                         title={proxy.assigned_profile_id ? 'Cannot delete assigned proxy' : 'Delete proxy'}
                       >
-                        <i className="fas fa-trash-alt"></i> Delete
+                        <FiTrash2 /> Delete
                       </button>
                     </div>
                   </td>
@@ -298,6 +306,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
               <button
                 className="modal-close"
                 onClick={() => setShowCreateModal(false)}
+                aria-label="Close"
               >
                 ×
               </button>
@@ -366,14 +375,14 @@ const ProxyManager = ({ onStatusUpdate }) => {
                   className="btn btn-secondary"
                   onClick={() => setShowCreateModal(false)}
                 >
-                  <i className="fas fa-times"></i> Cancel
+                  Cancel
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
                   disabled={loading}
                 >
-                  {loading ? <span className="loading-spinner"></span> : <><i className="fas fa-plus-circle"></i> Add Proxy</>}
+                  {loading ? <span className="loading-spinner"></span> : <><FiPlusCircle /> Add Proxy</>}
                 </button>
               </div>
             </form>
@@ -390,6 +399,7 @@ const ProxyManager = ({ onStatusUpdate }) => {
               <button
                 className="modal-close"
                 onClick={() => setShowBulkModal(false)}
+                aria-label="Close"
               >
                 ×
               </button>
@@ -422,14 +432,14 @@ const ProxyManager = ({ onStatusUpdate }) => {
                   className="btn btn-secondary"
                   onClick={() => setShowBulkModal(false)}
                 >
-                  <i className="fas fa-times"></i> Cancel
+                  Cancel
                 </button>
                 <button
                   type="submit"
                   className="btn btn-success"
                   disabled={loading}
                 >
-                  {loading ? <span className="loading-spinner"></span> : <><i className="fas fa-box-open"></i> Import Proxies</>}
+                  {loading ? <span className="loading-spinner"></span> : <><FiBox /> Import Proxies</>}
                 </button>
               </div>
             </form>

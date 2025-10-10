@@ -1,3 +1,4 @@
+// NOTE: All lifecycle stop logic should be handled in this file. Do not duplicate /lifecycle/stop in profiles.js.
 const express = require('express');
 const router = express.Router();
 

@@ -83,12 +83,17 @@ const Dashboard = ({ systemStatus, onStatusUpdate }) => {
   };
 
   const fetchPerformanceMetrics = async () => {
-    // Simulate performance metrics (in real app, this would come from backend)
-    setPerformanceMetrics({
-      cpuUsage: Math.floor(Math.random() * 100),
-      memoryUsage: Math.floor(Math.random() * 100),
-      networkStatus: ['good', 'fair', 'poor'][Math.floor(Math.random() * 3)]
-    });
+    try {
+      const response = await fetch('http://localhost:3001/api/system/performance');
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setPerformanceMetrics(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch system performance metrics:', error);
+    }
   };
 
   const StatCard = ({ title, value, subtitle, color = '#667eea', icon, trend, onClick }) => (

@@ -1,3 +1,6 @@
+// System performance endpoint
+const os = require('os');
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -60,6 +63,51 @@ app.post('/api/lifecycle/start', async (req, res) => {
   try {
     await lifecycleManager.start();
     res.json({ success: true, message: 'Lifecycle manager started' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/system/performance', (req, res) => {
+  try {
+    // CPU usage: average over all cores
+    const cpus = os.cpus();
+    let idleMs = 0, totalMs = 0;
+    cpus.forEach(core => {
+      for (const type in core.times) {
+        totalMs += core.times[type];
+      }
+      idleMs += core.times.idle;
+    });
+    const cpuUsage = Math.round(100 - (100 * idleMs / totalMs));
+
+    // Memory usage
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const memoryUsage = Math.round((usedMem / totalMem) * 100);
+
+    // Network status (simple: if at least one interface has an IPv4 address, consider 'good')
+    const interfaces = os.networkInterfaces();
+    let networkStatus = 'poor';
+    for (const name in interfaces) {
+      for (const iface of interfaces[name]) {
+        if (!iface.internal && iface.family === 'IPv4') {
+          networkStatus = 'good';
+          break;
+        }
+      }
+      if (networkStatus === 'good') break;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        cpuUsage,
+        memoryUsage,
+        networkStatus
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
