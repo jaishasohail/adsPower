@@ -66,7 +66,7 @@ router.post('/:id/launch', async (req, res) => {
   try {
     const profileService = req.app.locals.profileService;
     const mouseService = req.app.locals.mouseService;
-    
+    const adsPowerService = req.app.locals.adsPowerService;
     const profileId = parseInt(req.params.id);
     const launchOptions = req.body || {};
 
@@ -83,14 +83,19 @@ router.post('/:id/launch', async (req, res) => {
       // Get profile info for device type
       const profile = await req.app.locals.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
       
-      // Apply device-specific mouse behavior
+      // Start human-like mouse behavior
       if (mouseService && profile) {
-        mouseService.applyDeviceProfile(profile.device_type);
-        
-        // Start mouse activity simulation for this profile
-        setTimeout(() => {
-          mouseService.simulateProfileActivity(60000, 'medium'); // 1 minute of activity
-        }, 2000);
+        setTimeout(async () => {
+          const humanResult = await mouseService.startComprehensiveHumanBehavior(profileId, {
+            duration: 60000, // 1 minute by default
+            deviceType: profile.device_type,
+            intensity: 'medium'
+          });
+          
+          if (humanResult.success) {
+            console.log(`✅ Human behavior started for profile ${profileId}`);
+          }
+        }, 3000); // Wait 3 seconds for browser to load
       }
 
       res.json({ 
@@ -104,7 +109,7 @@ router.post('/:id/launch', async (req, res) => {
     } else {
       res.status(500).json({ 
         success: false, 
-        error: 'Failed to launch profile'
+        error: result.error || 'Failed to launch profile'
       });
     }
 
@@ -118,6 +123,7 @@ router.post('/:id/launch', async (req, res) => {
 router.post('/:id/stop', async (req, res) => {
   try {
     const profileService = req.app.locals.profileService;
+    const mouseService = req.app.locals.mouseService;
     const profileId = parseInt(req.params.id);
 
     // Validate profile ID
@@ -126,6 +132,12 @@ router.post('/:id/stop', async (req, res) => {
         success: false,
         error: `Invalid profile ID: ${req.params.id}. Profile ID must be a positive number.`
       });
+    }
+
+    // Stop mouse simulation first
+    if (mouseService) {
+      mouseService.stopSimulation(profileId);
+      console.log(`🛑 Stopped mouse simulation for profile ${profileId}`);
     }
 
     // Use the integrated ProfileService stop method
@@ -156,23 +168,43 @@ router.post('/:id/stop', async (req, res) => {
   }
 });
 
+
 // Delete profile
 router.delete('/:id', async (req, res) => {
   try {
     const profileService = req.app.locals.profileService;
     const adsPowerService = req.app.locals.adsPowerService;
+    const mouseService = req.app.locals.mouseService;
+    const db = req.app.locals.db;
     
     const profileId = req.params.id;
 
+    // Stop mouse simulation
+    if (mouseService) {
+      mouseService.stopSimulation(profileId);
+    }
+
     // Get profile information
-    const profile = await req.app.locals.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+    const profile = await db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
     if (!profile) {
       return res.status(404).json({ success: false, error: 'Profile not found' });
     }
 
-    // Delete from AdsPower if it has an ID
+    // Use force delete for AdsPower profile
     if (profile.ads_power_id) {
-      await adsPowerService.deleteProfile(profile.ads_power_id);
+      try {
+        console.log(`🔨 Initiating force delete for profile ${profile.ads_power_id}...`);
+        const forceDeleteResult = await adsPowerService.forceDeleteProfile(profile.ads_power_id, 3);
+        
+        if (!forceDeleteResult.success) {
+          console.warn(`⚠️ Force delete had issues:`, forceDeleteResult.error);
+          // Continue with local deletion anyway
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error during force delete:`, error.message);
+        // Continue with local deletion
+      }
     }
 
     // Delete from local database
@@ -223,15 +255,18 @@ router.get('/:id/status', async (req, res) => {
   }
 });
 
-// Get active profile sessions
-router.get('/active/sessions', async (req, res) => {
+// Get currently running (active) profiles from LifecycleManager
+router.get('/active/running', async (req, res) => {
   try {
-    const profileService = req.app.locals.profileService;
-    const sessions = profileService.getAllActiveProfileSessions();
-    res.json({ success: true, data: sessions });
-
+    const lifecycleManager = req.app.locals.lifecycleManager;
+    if (!lifecycleManager) {
+      return res.status(500).json({ success: false, error: 'LifecycleManager not initialized' });
+    }
+    const stats = lifecycleManager.getStats();
+    // Return only the activeProfiles array
+    res.json({ success: true, data: stats.activeProfiles });
   } catch (error) {
-    console.error('Error getting active sessions:', error);
+    console.error('Error getting running profiles:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -342,7 +377,8 @@ router.post('/batch', async (req, res) => {
       targetUrl: profile.target_url || 'https://google.com',
       deviceTypes: [profile.device_type || 'PC'],
       autoDelete: true,
-      instantRecycle: true
+      instantRecycle: true,
+      humanLikeActivity: true
     });
 
     // Update max_concurrent_profiles setting in database
@@ -366,6 +402,60 @@ router.post('/batch', async (req, res) => {
   } catch (error) {
     console.error('Error in batch profile creation:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// LIFECYCLE ENDPOINTS - Stop lifecycle
+router.post('/lifecycle/stop', async (req, res) => {
+  try {
+    const lifecycleManager = req.app.locals.lifecycleManager;
+    
+    if (!lifecycleManager) {
+      return res.status(500).json({
+        success: false,
+        error: 'Lifecycle manager not initialized'
+      });
+    }
+
+    console.log('🛑 Received stop lifecycle request via /profiles/lifecycle/stop');
+    
+    const result = await lifecycleManager.stop();
+    
+    console.log('✅ Stop lifecycle result:', result);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error stopping lifecycle:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// LIFECYCLE ENDPOINTS - Emergency stop
+router.post('/lifecycle/emergency-stop', async (req, res) => {
+  try {
+    const lifecycleManager = req.app.locals.lifecycleManager;
+    
+    if (!lifecycleManager) {
+      return res.status(500).json({
+        success: false,
+        error: 'Lifecycle manager not initialized'
+      });
+    }
+
+    console.log('🚨 Received EMERGENCY STOP request');
+    
+    const result = await lifecycleManager.emergencyStop();
+    
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error in emergency stop:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 

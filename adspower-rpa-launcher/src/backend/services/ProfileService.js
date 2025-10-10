@@ -51,70 +51,76 @@ class ProfileService {
 
   // Create profile in AdsPower with enhanced group handling
   async createAdsPowerProfile(profileData, localProfileId) {
-    try {
-      console.log(`🎨 Creating AdsPower profile for local profile ${localProfileId}`);
-      const { name, target_url, proxy_id, device_type = 'PC' } = profileData;
+  try {
+    console.log(`🎨 Creating AdsPower profile for local profile ${localProfileId}`);
+    const { name, target_url, proxy_id, device_type = 'PC' } = profileData;
 
-      // Build proxy config: always send user_proxy_config (required by AdsPower API)
-      let proxyConfig = null;
-      if (proxy_id) {
-        const proxy = await this.db.get('SELECT * FROM proxies WHERE id = ?', [proxy_id]);
-        if (proxy) {
-          if (proxy.ip_address && proxy.port) {
-            proxyConfig = {
-              proxy_type: (proxy.protocol || 'http').toLowerCase(),
-              proxy_host: proxy.ip_address,
-              proxy_port: String(proxy.port),
-              proxy_user: proxy.username || '',
-              proxy_password: proxy.password || '',
-              proxy_soft: 'other'
-            };
-            console.log('📡 Using proxy configuration for profile');
-          } else {
-            console.warn('Proxy record missing host/port; skipping proxy assignment.');
-          }
-        } else {
-          console.warn('Proxy not found; skipping proxy assignment.');
-        }
-      } else {
-        // No proxy selected: send a 'no proxy' config
-        proxyConfig = { proxy_type: 'none' };
+    // CRITICAL: AdsPower REQUIRES proxy configuration
+    let proxyConfig = null;
+    
+    if (proxy_id) {
+      // Use assigned proxy from database
+      const proxy = await this.db.get('SELECT * FROM proxies WHERE id = ?', [proxy_id]);
+      if (proxy && proxy.ip_address && proxy.port) {
+        proxyConfig = {
+          proxy_type: (proxy.protocol || 'http').toLowerCase(),
+          proxy_host: proxy.ip_address,
+          proxy_port: String(proxy.port),
+          proxy_user: proxy.username || '',
+          proxy_password: proxy.password || '',
+          proxy_soft: 'other'
+        };
+        console.log('📡 Using database proxy configuration');
       }
-
-      const groupId = await this.getOrCreateDefaultGroup();
-      if (groupId === undefined || groupId === null || groupId === '') {
-        throw new Error('Resolved groupId is invalid (undefined/null/empty)');
-      }
-
-      const derivedDomain = target_url ? this.extractDomain(target_url) : 'google.com';
-      const openUrls = [target_url || 'https://google.com'];
-
-      const fingerprint = this.adsPowerService.generateFingerprintConfig(device_type);
-      if (fingerprint.screen_resolution.includes(',')) {
-        fingerprint.screen_resolution = fingerprint.screen_resolution.replace(',', 'x');
-      }
-
-
-      const adsPowerConfig = {
-        name: `${name} (ID: ${localProfileId})`,
-        domain_name: derivedDomain,
-        open_urls: openUrls,
-        group_id: groupId,
-        fingerprint_config: fingerprint,
-        remark: `Created by RPA Launcher - Profile ID: ${localProfileId}`,
-        user_proxy_config: proxyConfig // Always include user_proxy_config
-      };
-
-      console.log('🚀 Creating AdsPower profile with config:', JSON.stringify(adsPowerConfig, null, 2));
-
-      const result = await this.adsPowerService.createProfile(adsPowerConfig);
-      console.log('🔄 AdsPower profile creation result:', result);
-      return result;
-    } catch (error) {
-      console.error('❌ Error creating AdsPower profile:', error.message);
-      return { success: false, error: error.message };
     }
+    
+    // If no proxy in database, use "noproxy" type (REQUIRED by AdsPower)
+    if (!proxyConfig) {
+      proxyConfig = {
+        proxy_type: 'noproxy',
+        proxy_soft: 'no_proxy'
+      };
+      console.log('🚫 No proxy assigned - using noproxy configuration');
+    }
+
+    // Get or create group
+    const groupId = await this.getOrCreateDefaultGroup();
+    if (groupId === undefined || groupId === null) {
+      throw new Error('Failed to resolve group_id');
+    }
+
+    // Derive domain and URLs
+    const derivedDomain = target_url ? this.extractDomain(target_url) : 'google.com';
+    const openUrls = [target_url || 'https://google.com'];
+
+    // Generate fingerprint
+    const fingerprint = this.adsPowerService.generateFingerprintConfig(device_type);
+    if (fingerprint.screen_resolution.includes(',')) {
+      fingerprint.screen_resolution = fingerprint.screen_resolution.replace(',', 'x');
+    }
+
+    // Build AdsPower configuration
+    const adsPowerConfig = {
+      name: `${name} (ID: ${localProfileId})`,
+      domain_name: derivedDomain,
+      open_urls: openUrls,
+      group_id: groupId,
+      fingerprint_config: fingerprint,
+      user_proxy_config: proxyConfig, // ALWAYS include this
+      remark: `Created by RPA Launcher - Profile ID: ${localProfileId}`
+    };
+
+    console.log('🚀 Creating AdsPower profile with config:', JSON.stringify(adsPowerConfig, null, 2));
+
+    const result = await this.adsPowerService.createProfile(adsPowerConfig);
+    console.log('🔄 AdsPower profile creation result:', result);
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error creating AdsPower profile:', error.message);
+    return { success: false, error: error.message };
   }
+}
 
   // Create a new profile with AdsPower integration
   async createProfile(profileData) {
@@ -297,16 +303,17 @@ class ProfileService {
   // Launch a profile using AdsPower with enhanced error handling and automation
   // CRITICAL FIX: Replace the launchProfile method in ProfileService.js
 
+// CRITICAL FIX: Replace the launchProfile method in ProfileService.js
+
 async launchProfile(profileId, options = {}) {
   try {
     console.log(`🚀 [LAUNCH] Starting launch for profile ${profileId}...`);
     
-    // Step 1: Verify profile exists
+    // Step 1: Get profile from database
     const profile = await this.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
     if (!profile) {
       throw new Error(`Profile ${profileId} not found in database`);
     }
-    console.log(`✅ [LAUNCH] Profile ${profileId} found: ${profile.name}`);
 
     // Step 2: Check if already running
     if (this.activeProfiles.has(profileId)) {
@@ -314,23 +321,19 @@ async launchProfile(profileId, options = {}) {
       return {
         success: true,
         profileId: profileId,
-        alreadyRunning: true,
-        sessionData: this.activeProfiles.get(profileId)
+        alreadyRunning: true
       };
     }
 
     // Step 3: Verify AdsPower connection
-    console.log(`🔌 [LAUNCH] Checking AdsPower connection...`);
     const isConnected = await this.adsPowerService.checkConnection();
-    console.log(`🔌 [LAUNCH] AdsPower connected: ${isConnected}, Demo mode: ${this.adsPowerService.demoMode}`);
-
     if (!isConnected && !this.adsPowerService.demoMode) {
-      throw new Error('AdsPower is not connected. Please start AdsPower and enable Local API.');
+      throw new Error('AdsPower is not connected');
     }
 
     // Step 4: Ensure AdsPower profile exists
     if (!profile.ads_power_id) {
-      console.log(`🔄 [LAUNCH] No AdsPower ID for profile ${profileId}, creating...`);
+      console.log(`🔄 [LAUNCH] Creating AdsPower profile...`);
       
       const createResult = await this.createAdsPowerProfile({
         name: profile.name,
@@ -340,52 +343,62 @@ async launchProfile(profileId, options = {}) {
       }, profileId);
 
       if (!createResult.success || !createResult.profile_id) {
-        throw new Error(`Failed to create AdsPower profile: ${createResult.error || 'Unknown error'}`);
+        throw new Error(`Failed to create AdsPower profile: ${createResult.error}`);
       }
 
-      // Update database with new AdsPower ID
       await this.db.run(
         'UPDATE profiles SET ads_power_id = ? WHERE id = ?',
         [createResult.profile_id, profileId]
       );
       profile.ads_power_id = createResult.profile_id;
-      console.log(`✅ [LAUNCH] Created AdsPower profile: ${createResult.profile_id}`);
     }
 
     // Step 5: Update status to launching
-    console.log(`📝 [LAUNCH] Updating status to 'launching'...`);
-    await this.updateProfileStatus(profileId, 'launching');
+    await this.db.run(
+      'UPDATE profiles SET status = ? WHERE id = ?',
+      ['launching', profileId]
+    );
 
-    // Step 6: Prepare launch options
+    // Step 6: Prepare launch options with anti-detection
     const launchOptions = {
-      headless: options.headless || false,
-      disable_password_filling: options.disable_password_filling || false,
-      clear_cache_after_closing: options.clear_cache_after_closing || false,
-      enable_password_saving: options.enable_password_saving || false,
+      headless: false, // MUST be false for AdsPower to work
+      disable_password_filling: true,
+      clear_cache_after_closing: false,
+      enable_password_saving: false,
       launch_args: [
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--window-size=1920,1080',
-        ...(options.launch_args || [])
+        '--no-sandbox'
       ]
     };
 
     console.log(`🚀 [LAUNCH] Starting AdsPower profile ${profile.ads_power_id}...`);
-    console.log(`🚀 [LAUNCH] Launch options:`, JSON.stringify(launchOptions, null, 2));
 
-    // Step 7: Launch in AdsPower
-    const result = await this.adsPowerService.startProfile(
-      profile.ads_power_id,
-      launchOptions
-    );
+    // Step 7: Launch in AdsPower (with retry)
+    let result = null;
+    let retries = 0;
+    const maxRetries = 2;
 
-    console.log(`🔄 [LAUNCH] AdsPower start result:`, JSON.stringify(result, null, 2));
+    while (retries <= maxRetries) {
+      result = await this.adsPowerService.startProfile(
+        profile.ads_power_id,
+        launchOptions
+      );
 
-    if (!result.success) {
-      throw new Error(result.error || 'AdsPower startProfile returned success: false');
+      if (result.success) {
+        break;
+      }
+
+      retries++;
+      if (retries <= maxRetries) {
+        console.warn(`⚠️ Launch attempt ${retries} failed, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    if (!result || !result.success) {
+      throw new Error(result?.error || 'Failed to start profile after retries');
     }
 
     // Step 8: Store session data
@@ -395,29 +408,18 @@ async launchProfile(profileId, options = {}) {
       wsEndpoint: result.ws_endpoint,
       seleniumEndpoint: result.selenium_endpoint,
       debugPort: result.debug_port,
-      launchedAt: new Date().toISOString(),
-      targetUrl: profile.target_url || options.target_url || 'https://www.google.com',
-      lastActivity: new Date().toISOString()
+      launchedAt: new Date().toISOString()
     };
 
     this.activeProfiles.set(profileId, sessionData);
-    console.log(`✅ [LAUNCH] Session data stored for profile ${profileId}`);
 
     // Step 9: Update status to running
-    await this.updateProfileStatus(profileId, 'running');
-    console.log(`✅ [LAUNCH] Profile ${profileId} status updated to 'running'`);
-
-    // Step 10: Log success
-    await this.logAction('info', 'Profile launched successfully', profileId, {
-      ws_endpoint: result.ws_endpoint,
-      selenium_endpoint: result.selenium_endpoint,
-      debug_port: result.debug_port,
-      ads_power_id: profile.ads_power_id
-    });
+    await this.db.run(
+      'UPDATE profiles SET status = ?, last_launched = CURRENT_TIMESTAMP WHERE id = ?',
+      ['running', profileId]
+    );
 
     console.log(`✅ [LAUNCH] Profile ${profileId} launched successfully!`);
-    console.log(`📊 [LAUNCH] WS Endpoint: ${result.ws_endpoint}`);
-    console.log(`📊 [LAUNCH] Selenium Endpoint: ${result.selenium_endpoint}`);
 
     return {
       success: true,
@@ -426,23 +428,19 @@ async launchProfile(profileId, options = {}) {
     };
 
   } catch (error) {
-    console.error(`❌ [LAUNCH] ERROR launching profile ${profileId}:`, error);
-    console.error(`❌ [LAUNCH] Error stack:`, error.stack);
+    console.error(`❌ [LAUNCH] ERROR:`, error);
     
-    // Update status to error
+    // Update to error status
     try {
-      await this.updateProfileStatus(profileId, 'error');
+      await this.db.run(
+        'UPDATE profiles SET status = ? WHERE id = ?',
+        ['error', profileId]
+      );
+      this.activeProfiles.delete(profileId);
     } catch (statusError) {
-      console.error(`❌ [LAUNCH] Failed to update error status:`, statusError);
+      console.error('Failed to update error status:', statusError);
     }
     
-    // Log the error
-    await this.logAction('error', `Failed to launch profile: ${error.message}`, profileId, {
-      error: error.toString(),
-      stack: error.stack
-    });
-    
-    // Return error instead of throwing
     return {
       success: false,
       profileId: profileId,
@@ -582,38 +580,48 @@ async launchProfile(profileId, options = {}) {
 
   // Delete a profile
   async deleteProfile(profileId) {
-    try {
-      const profile = await this.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+  try {
+    const profile = await this.db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+    
+    if (profile && profile.ads_power_id) {
+      console.log(`🗑️ [PROFILE] Deleting profile ${profileId} (AdsPower: ${profile.ads_power_id})...`);
       
-      if (profile && profile.ads_power_id) {
-        // Try to delete from AdsPower first
-        try {
-          await this.adsPowerService.deleteProfile(profile.ads_power_id);
-          console.log(`✅ Deleted AdsPower profile ${profile.ads_power_id}`);
-        } catch (error) {
-          console.warn(`Failed to delete AdsPower profile ${profile.ads_power_id}:`, error.message);
+      // Use force delete which handles stop + wait + delete with retries
+      try {
+        const forceDeleteResult = await this.adsPowerService.forceDeleteProfile(profile.ads_power_id);
+        
+        if (!forceDeleteResult.success) {
+          console.warn(`⚠️ [PROFILE] Force delete failed for ${profile.ads_power_id}:`, forceDeleteResult.error);
+          // Continue with local deletion anyway
+        } else {
+          console.log(`✅ [PROFILE] Successfully deleted AdsPower profile ${profile.ads_power_id}`);
         }
+      } catch (error) {
+        console.warn(`⚠️ [PROFILE] Error during force delete:`, error.message);
+        // Continue with local deletion anyway
       }
-
-      // Free up the proxy if assigned
-      await this.db.run(
-        'UPDATE proxies SET assigned_profile_id = NULL WHERE assigned_profile_id = ?',
-        [profileId]
-      );
-
-      // Delete the profile from database
-      await this.db.run('DELETE FROM profiles WHERE id = ?', [profileId]);
-      
-      // Remove from active profiles map
-      this.activeProfiles.delete(profileId);
-
-      await this.logAction('info', 'Profile deleted', profileId);
-      return true;
-    } catch (error) {
-      console.error('Error deleting profile:', error);
-      throw error;
     }
+
+    // Free up the proxy if assigned
+    await this.db.run(
+      'UPDATE proxies SET assigned_profile_id = NULL WHERE assigned_profile_id = ?',
+      [profileId]
+    );
+
+    // Delete the profile from database
+    await this.db.run('DELETE FROM profiles WHERE id = ?', [profileId]);
+    
+    // Remove from active profiles map
+    this.activeProfiles.delete(profileId);
+
+    await this.logAction('info', 'Profile deleted', profileId);
+    console.log(`✅ [PROFILE] Profile ${profileId} fully deleted from database`);
+    return true;
+  } catch (error) {
+    console.error('❌ [PROFILE] Error deleting profile:', error);
+    throw error;
   }
+}
 
   // Schedule profile for launch
   async scheduleProfileLaunch(profileId, options = {}) {

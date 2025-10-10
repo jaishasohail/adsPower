@@ -10,6 +10,7 @@ const ProfileService = require('./services/ProfileService');
 const AdsPowerService = require('./services/AdsPowerService');
 const MouseService = require('./services/MouseService');
 const LifecycleManager = require('./services/LifecycleManager');
+const lifecycleRoutes = require('./api/lifecycle');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -40,6 +41,7 @@ app.use('/api/profiles', profileRoutes);
 app.use('/api/proxies', proxyRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/logs', logsRoutes);
+app.use('/api/lifecycle', lifecycleRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

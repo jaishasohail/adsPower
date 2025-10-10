@@ -21,6 +21,7 @@ const ProfileManager = ({ onStatusUpdate }) => {
   const [availableSlots, setAvailableSlots] = useState(0);
   const [profileCount, setProfileCount] = useState(1);
   const [lifecycleStats, setLifecycleStats] = useState(null);
+  const [runningProfiles, setRunningProfiles] = useState([]);
 
   useEffect(() => {
     fetchProfiles();
@@ -36,6 +37,24 @@ const ProfileManager = ({ onStatusUpdate }) => {
     
     return () => clearInterval(interval);
   }, []);
+  useEffect(() => {
+    fetchRunningProfiles();
+    const interval = setInterval(fetchRunningProfiles, 5000); // Refresh every 5s
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch running profiles from backend
+  const fetchRunningProfiles = async () => {
+    try {
+      const res = await fetch('/api/profiles/active/running');
+      const json = await res.json();
+      if (json.success) {
+        setRunningProfiles(json.data || []);
+      }
+    } catch (err) {
+      // Optionally handle error
+    }
+  };
 
   const fetchProfiles = async () => {
     try {
